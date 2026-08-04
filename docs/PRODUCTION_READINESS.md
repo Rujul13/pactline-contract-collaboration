@@ -12,6 +12,7 @@
 - Owner-only paragraph proposal acceptance/rejection with optimistic concurrency, immutable snapshots, content hashes, and audit records.
 - Payload limits and no-store cache controls on authentication and contract workspace responses.
 - Automated build, schema, security, entropy, password verification, and stale-edit invariant tests.
+- GitHub CI and Dependabot checks; the production dependency audit currently reports zero vulnerabilities.
 
 ## Required before real customer contracts
 
@@ -25,6 +26,8 @@
 8. Add observability: structured logs, request correlation, error reporting, latency/error SLOs, audit export, backup/restore drills, and R2 retention policies.
 9. Complete legal/security review covering data residency, encryption key management, subprocessors, retention, legal hold, e-signature requirements, and SOC 2 controls.
 10. Run staging tests with representative contracts containing tables, exhibits, tracked changes, signatures, and documents near the size limit.
+
+The full development dependency tree currently retains one high-severity advisory in the latest Cloudflare local-development toolchain and moderate legacy tooling under Drizzle Kit. Automated fixes require incompatible downgrades. This is documented in `SECURITY.md`; production dependencies are clean, and development servers must remain limited to trusted interfaces.
 
 ## Release gates
 
