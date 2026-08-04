@@ -46,3 +46,19 @@ test("migration enforces stable clauses, versions, accounts, and audit storage",
   assert.match(migration, /`before_hash` text/);
   assert.match(migration, /`after_hash` text/);
 });
+
+test("production hardening includes durable paragraph review and client sessions", async () => {
+  const [migration, security, clientAuth, proposalRoute] = await Promise.all([
+    readFile(new URL("../drizzle/0002_even_captain_britain.sql", import.meta.url), "utf8"),
+    readFile(new URL("../lib/security.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/client-auth.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/client/contracts/[contractId]/proposals/route.ts", import.meta.url), "utf8"),
+  ]);
+  for (const table of ["document_blocks", "paragraph_proposals", "access_sessions"]) assert.ok(migration.includes(`CREATE TABLE \`${table}\``), `missing ${table} table`);
+  assert.match(security, /PBKDF2/);
+  assert.match(security, /210_000/);
+  assert.match(clientAuth, /HttpOnly; Secure; SameSite=Strict/);
+  assert.match(clientAuth, /failed_attempts < 8/);
+  assert.match(proposalRoute, /The document changed during your review/);
+  assert.match(proposalRoute, /paragraph changed during your review/);
+});

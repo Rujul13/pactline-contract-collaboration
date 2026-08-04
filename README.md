@@ -1,10 +1,13 @@
 # Pactline
 
-Pactline is a clause-level contract collaboration application. It preserves stable clause identities across DOCX versions, routes one internal approval, attributes every external action to a named account, and locks only when both parties agree to the same version.
+Pactline is a secure Word-document collaboration application for companies exchanging and negotiating contracts. It preserves stable paragraph identities across DOCX versions, attributes every external action to a named account, and locks only when both parties agree to the same version.
 
 ## Implemented foundation
 
-- Responsive contract review workspace with accessible document, history, audit, proposal, detail, and sharing surfaces.
+- Responsive contract review workspace with natural paragraph editing, client review, history, audit, proposal, detail, and sharing surfaces.
+- Server-side external reviewer authentication using PBKDF2-SHA256 password hashes, opaque secure cookies, expiry, lockout, and revocable sessions.
+- Owner-controlled temporary access creation; generated passwords are returned exactly once and are never stored in plaintext.
+- Durable paragraph blocks and paragraph proposals with optimistic version checks, stale-edit prevention, and attributed audit records.
 - Correct proposal acceptance in the interface: accepted language replaces the clause and creates the next version.
 - Transactional server workflow for accept, reject, and counter decisions with stale-version and lock checks.
 - Relational D1 model for internal users, contracts, parties, named access accounts, approvals, stable clauses, immutable versions, proposals, agreements, document objects, audit events, and reliable integration delivery.
@@ -19,7 +22,7 @@ Pactline is a clause-level contract collaboration application. It preserves stab
 
 The following capabilities intentionally fail closed until their provider configuration is supplied:
 
-- External username/password authentication provider and server-side password hashing/session management.
+- Production email delivery for temporary reviewer credentials and account recovery.
 - ONLYOFFICE Document Server URL and JWT secret for live embedded editing.
 - AI provider base URL and API key.
 - CRM provider endpoint and API key.
@@ -31,8 +34,8 @@ Copy `.env.example` to a local ignored environment file and populate values ther
 
 ## Data and document rules
 
-- `clauses.clause_key` is unique within a contract and persists across versions.
-- Word content controls map DOCX content to `clause_key`; uploaded documents do not replace the authoritative state until mapping and malware review complete.
+- `document_blocks.block_key` is unique within a contract and persists across versions.
+- Uploaded documents do not replace authoritative state until parsing, mapping, and malware review complete.
 - Proposal decisions are server-authorized and version-scoped.
 - Every accepted change creates an immutable full-clause snapshot.
 - Audit entries are append-only; corrections create new events.
@@ -50,3 +53,5 @@ npm test
 ```
 
 `npm test` includes the production build and verifies product, credential-safety, and migration invariants.
+
+See [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) for implemented controls, remaining release gates, and the staging checklist.

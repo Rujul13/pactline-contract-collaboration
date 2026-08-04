@@ -15,6 +15,13 @@
       "when": 1785593981046,
       "tag": "0001_even_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785882675376,
+      "tag": "0002_even_captain_britain",
+      "breakpoints": true
     }
   ]
 }

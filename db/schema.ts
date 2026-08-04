@@ -160,3 +160,41 @@ export const integrationOutbox = sqliteTable("integration_outbox", {
   lastError: text("last_error"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("idx_integration_outbox_delivery").on(table.status, table.availableAt), index("idx_integration_outbox_contract").on(table.contractId, table.createdAt)]);
+
+export const documentBlocks = sqliteTable("document_blocks", {
+  id: text("id").primaryKey(),
+  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  blockKey: text("block_key").notNull(),
+  orderIndex: integer("order_index").notNull(),
+  kind: text("kind", { enum: ["title", "heading", "body"] }).notNull().default("body"),
+  currentText: text("current_text").notNull(),
+  contentHash: text("content_hash").notNull(),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_document_blocks_contract_key").on(table.contractId, table.blockKey), uniqueIndex("idx_document_blocks_contract_order").on(table.contractId, table.orderIndex)]);
+
+export const paragraphProposals = sqliteTable("paragraph_proposals", {
+  id: text("id").primaryKey(),
+  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  blockId: text("block_id").notNull().references(() => documentBlocks.id, { onDelete: "cascade" }),
+  baseVersion: integer("base_version").notNull(),
+  proposedByAccountId: text("proposed_by_account_id").notNull().references(() => accessAccounts.id),
+  originalText: text("original_text").notNull(),
+  proposedText: text("proposed_text").notNull(),
+  rationale: text("rationale"),
+  status: text("status", { enum: ["pending", "accepted", "rejected", "withdrawn"] }).notNull().default("pending"),
+  resolvedAt: text("resolved_at"),
+  resolvedBy: text("resolved_by"),
+  ...timestamps,
+}, (table) => [index("idx_paragraph_proposals_queue").on(table.contractId, table.status, table.createdAt), index("idx_paragraph_proposals_block").on(table.blockId, table.createdAt)]);
+
+export const accessSessions = sqliteTable("access_sessions", {
+  id: text("id").primaryKey(),
+  accessAccountId: text("access_account_id").notNull().references(() => accessAccounts.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  revokedAt: text("revoked_at"),
+  lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  ipHash: text("ip_hash"),
+  userAgentHash: text("user_agent_hash"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [uniqueIndex("idx_access_sessions_token_hash").on(table.tokenHash), index("idx_access_sessions_account_active").on(table.accessAccountId, table.expiresAt, table.revokedAt)]);

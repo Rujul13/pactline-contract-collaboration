@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Pactline — Contract collaboration",
-  description: "Clause-by-clause contract negotiation with a complete, trusted history.",
+  description: "Secure Word-document collaboration with attributed paragraph proposals, version history, and cross-company review.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
