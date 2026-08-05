@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { verifyPassword } from "./security";
+import { sha256Hex, verifyPassword } from "./security";
 
 const COOKIE_NAME = "__Host-pactline_owner";
 const SESSION_HOURS = 12;
@@ -22,13 +22,9 @@ function ownerEnvironment(): OwnerEnvironment {
   };
 }
 
-async function ownerSetting(key: "owner_password_hash" | "owner_session_secret") {
-  try {
-    const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first<{ value: string }>();
-    return row?.value ?? null;
-  } catch {
-    return null;
-  }
+async function ownerSetting(key: "owner_password_hash" | "owner_password_sha256" | "owner_session_secret") {
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first<{ value: string }>();
+  return row?.value ?? null;
 }
 
 function base64Url(bytes: Uint8Array) {
@@ -93,6 +89,17 @@ export async function verifyOwnerPassword(password: string) {
   const ownerEnv = ownerEnvironment();
   const passwordHash = ownerEnv.OWNER_PASSWORD_HASH ?? await ownerSetting("owner_password_hash");
   if (passwordHash && await verifyPassword(password, passwordHash)) return true;
+  const expectedSha256 = await ownerSetting("owner_password_sha256");
+  if (expectedSha256) {
+    const actualSha256 = await sha256Hex(password);
+    if (actualSha256.length === expectedSha256.length) {
+      let hashDifference = 0;
+      for (let index = 0; index < actualSha256.length; index += 1) {
+        hashDifference |= actualSha256.charCodeAt(index) ^ expectedSha256.charCodeAt(index);
+      }
+      if (hashDifference === 0) return true;
+    }
+  }
   const storedPassword = ownerEnv.OWNER_PASSWORD;
   if (!storedPassword || password.length !== storedPassword.length) return false;
   let difference = 0;
