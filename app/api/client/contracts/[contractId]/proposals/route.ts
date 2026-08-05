@@ -8,13 +8,14 @@ export async function GET(request: Request, context: { params: Promise<{ contrac
   if (!session) return Response.json({ error: "Authentication required" }, { status: 401, headers: { "cache-control": "no-store" } });
   const { contractId } = await context.params;
   if (session.contractId !== contractId) return Response.json({ error: "Contract not found" }, { status: 404 });
-  const [contract, blocks, proposals] = await Promise.all([
+  const [contract, blocks, proposals, agreements] = await Promise.all([
     env.DB.prepare("SELECT id, title, status, current_version, updated_at FROM contracts WHERE id = ?").bind(contractId).first(),
     env.DB.prepare("SELECT id, block_key, order_index, kind, current_text FROM document_blocks WHERE contract_id = ? ORDER BY order_index").bind(contractId).all(),
     env.DB.prepare("SELECT id, block_id, base_version, original_text, proposed_text, rationale, status, created_at FROM paragraph_proposals WHERE contract_id = ? AND proposed_by_account_id = ? ORDER BY created_at DESC").bind(contractId, session.accountId).all(),
+    env.DB.prepare("SELECT party_id, version_number FROM agreements WHERE contract_id=? AND version_number=(SELECT current_version FROM contracts WHERE id=?)").bind(contractId, contractId).all(),
   ]);
   if (!contract) return Response.json({ error: "Contract not found" }, { status: 404 });
-  return Response.json({ contract, blocks: blocks.results, proposals: proposals.results, reviewer: { name: session.name, company: session.company, username: session.username, permission: session.permission } }, { headers: { "cache-control": "private, no-store" } });
+  return Response.json({ contract, blocks: blocks.results, proposals: proposals.results, agreements: agreements.results, reviewer: { name: session.name, company: session.company, username: session.username, permission: session.permission, partyId: session.partyId } }, { headers: { "cache-control": "private, no-store" } });
 }
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {

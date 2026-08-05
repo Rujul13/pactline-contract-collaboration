@@ -138,3 +138,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible { outline:3px so
 .portal-notice { min-height:48px; display:flex; align-items:center; justify-content:center; gap:9px; padding:8px 18px; border-bottom:1px solid #dfdfda; background:#f8f8f5; color:#66676a; font-size:9px; }.portal-notice strong { border-radius:10px; padding:4px 7px; background:#111214; color:white; font-size:8px; text-transform:uppercase; letter-spacing:.5px; }
 .portal-document { margin-top:26px; margin-bottom:120px; }.portal-message { width:min(760px,calc(100% - 30px)); margin:14px auto; border-radius:8px; padding:10px 12px; font-size:10px; font-weight:650; }.portal-message.error { background:#fff0ec; color:#973f31; }.portal-message.success { background:#ededf7; color:#414274; }
 @media (max-width:560px) { .portal-header { height:60px; padding:0 12px; }.portal-user>span,.portal-user>small { display:none; }.portal-notice { align-items:flex-start; flex-direction:column; gap:4px; }.portal-document { margin-top:8px; }.portal-login { padding:24px 20px; } }
+
+.compact-switcher { width:min(520px,calc(100vw - 290px)); min-height:0; display:block; }
+.primary-link { display:inline-flex; min-height:40px; align-items:center; justify-content:center; margin-top:16px; border-radius:8px; padding:0 14px; background:#111214; color:#fff; text-decoration:none; font-size:10px; font-weight:800; }
+.portal-card>button { min-height:38px; margin-top:12px; border:1px solid #d2d2ce; border-radius:7px; padding:0 12px; background:#fff; cursor:pointer; }
+.top-actions button:disabled,.word-controls input:disabled { opacity:.48; cursor:not-allowed; }
+.locked-pill { background:#ededeb; color:#242527; border-color:#d2d2ce; }.locked-pill i { background:#242527; }
+.agreement-panel { margin-top:28px; padding:14px; border:1px solid #d8d8d4; border-radius:9px; background:#f7f7f4; }.agreement-panel>strong { font:700 14px Georgia,serif; }.agreement-panel>p { color:#717275; font-size:9px; line-height:1.55; }
+.agreement-button,.secondary-download { width:100%; min-height:40px; border:0; border-radius:7px; padding:0 10px; font-size:9px; font-weight:800; cursor:pointer; }.agreement-button:disabled { background:#deded9; color:#88898b; cursor:not-allowed; }.secondary-download { margin-top:7px; border:1px solid #cfcfca; background:white; color:#26272a; }
+.reset-demo-button { width:100%; min-height:38px; margin-top:20px; border:1px solid #d4d4cf; border-radius:7px; background:white; color:#66676a; font-size:9px; font-weight:750; cursor:pointer; }
+.modal-actions a { display:flex; align-items:center; justify-content:center; border-radius:7px; color:#323336; text-decoration:none; font-size:9px; font-weight:750; }
+.portal-message.error { background:#fff0ec; color:#973f31; }.portal-message.success { background:#ededf7; color:#414274; }
+@media (max-width:560px) { .compact-switcher { width:auto; }.top-actions .saved,.top-actions .client-preview-button { display:none; }.top-actions { gap:5px; }.word-export { padding:0 7px; }.share-button { padding:0 9px; } }

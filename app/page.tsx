@@ -1,236 +1,185 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createDocumentDocx, type DocumentBlock, inspectDocx } from "../lib/docx";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type ReviewStatus = "accepted" | "rejected";
-type Proposal = { id: string; blockId: string; before: string; after: string; author: string; username: string; time: string };
-type ContractItem = { id: string; title: string; documentTitle: string; status: string; updated: string; fileName?: string };
+type ContractSummary = { id: string; title: string; status: string; current_version: number; updated_at: string; reviewer_name: string; client_company: string; reviewer_email: string; pending_proposals: number; filename?: string };
+type Block = { id: string; block_key: string; order_index: number; kind: "title" | "heading" | "body"; current_text: string };
+type Proposal = { id: string; block_id: string; base_version: number; original_text: string; proposed_text: string; rationale?: string; status: string; created_at: string; username: string; proposed_by_name: string };
+type Party = { id: string; role: "initiator" | "counterparty"; name: string; company: string; email: string };
+type Version = { id: string; version_number: number; created_by: string; document_sha256?: string; created_at: string };
+type Agreement = { party_id: string; version_number: number; agreed_at: string; role: string; name: string };
+type Activity = { id: string; actor_display: string; action: string; target_type: string; version_number?: number; created_at: string };
+type Access = { id: string; username: string; permission: string; status: string; expires_at: string; last_signed_in_at?: string; name: string; email: string };
+type Workspace = { contract: ContractSummary; blocks: Block[]; proposals: Proposal[]; parties: Party[]; documents: Array<{ id: string; filename: string; byte_size: number; sha256: string; scan_status: string; created_at: string }>; versions: Version[]; agreements: Agreement[]; activity: Activity[]; access: Access[] };
+type Credentials = { username: string; password: string; link: string };
 
-const initialBlocks: DocumentBlock[] = [
-  { id: "p1", kind: "title", text: "MASTER SERVICES AGREEMENT" },
-  { id: "p2", kind: "body", text: "This Master Services Agreement (the “Agreement”) is entered into as of August 12, 2026 by and between Northstar Labs, Inc., a Delaware corporation, and Brightline Studio LLC, a New York limited liability company." },
-  { id: "p3", kind: "body", text: "The parties agree that the following terms will govern the services described in any statement of work executed under this Agreement." },
-  { id: "p4", kind: "heading", text: "1. Services" },
-  { id: "p5", kind: "body", text: "Northstar will provide product strategy, interface design, and implementation support as described in each applicable statement of work. Each statement of work will identify the deliverables, schedule, fees, and acceptance criteria for the services." },
-  { id: "p6", kind: "body", text: "Northstar will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience." },
-  { id: "p7", kind: "heading", text: "2. Fees and payment" },
-  { id: "p8", kind: "body", text: "Brightline will pay all undisputed invoices within thirty (30) days after receipt. Fees are exclusive of applicable taxes and approved, reasonable out-of-pocket expenses." },
-  { id: "p9", kind: "body", text: "If Brightline disputes an invoice in good faith, it will notify Northstar promptly and the parties will work together to resolve the disputed amount." },
-  { id: "p10", kind: "heading", text: "3. Confidentiality" },
-  { id: "p11", kind: "body", text: "Each party will protect the other party’s Confidential Information using at least the same degree of care it uses for its own information of similar importance, and no less than reasonable care." },
-  { id: "p12", kind: "body", text: "Confidential Information may be used only to perform or receive services under this Agreement and may be disclosed only to personnel who need to know it and are bound by confidentiality obligations." },
-  { id: "p13", kind: "heading", text: "4. Term and termination" },
-  { id: "p14", kind: "body", text: "This Agreement begins on the effective date and continues for twelve months. Either party may terminate for material breach if the breach remains uncured for fifteen (15) days after written notice." },
-  { id: "p15", kind: "heading", text: "5. Limitation of liability" },
-  { id: "p16", kind: "body", text: "Except for excluded claims, each party’s aggregate liability under this Agreement will not exceed the fees paid or payable during the twelve months preceding the event giving rise to the claim." },
-  { id: "p17", kind: "heading", text: "6. General" },
-  { id: "p18", kind: "body", text: "This Agreement and its statements of work constitute the entire agreement between the parties concerning their subject matter and may be amended only in a writing signed by both parties." },
-];
+const DEMO_CONTRACT_ID = "sample-services-agreement";
+const DEMO_USERNAME = "client.reviewer";
+const DEMO_PASSWORD = "ReviewDemo!2026";
 
-const companies = [
-  { id: "brightline", name: "Brightline Studio", initials: "BS", contacts: [{ name: "Maya Chen", role: "General Counsel", email: "maya@brightline.studio" }, { name: "Theo Grant", role: "Finance Director", email: "theo@brightline.studio" }, { name: "Priya Shah", role: "Operations", email: "priya@brightline.studio" }], contracts: [{ id: "brightline-msa", title: "Brightline MSA", documentTitle: "Master Services Agreement", status: "Negotiating", updated: "Updated today" }, { id: "brightline-dpa", title: "Brightline DPA", documentTitle: "Data Processing Addendum", status: "Draft", updated: "Updated Jul 28" }] },
-  { id: "aperture", name: "Aperture Health", initials: "AH", contacts: [{ name: "Elena Park", role: "Head of Legal", email: "elena@aperture.health" }, { name: "Marcus Bell", role: "Procurement", email: "marcus@aperture.health" }], contracts: [{ id: "aperture-msa", title: "Aperture MSA", documentTitle: "Master Services Agreement", status: "Internal review", updated: "Updated yesterday" }] },
-  { id: "orbit", name: "Orbit Systems", initials: "OS", contacts: [{ name: "Noah Williams", role: "Commercial Counsel", email: "noah@orbit.systems" }, { name: "Sofia Rossi", role: "VP Partnerships", email: "sofia@orbit.systems" }], contracts: [{ id: "orbit-order", title: "Orbit Order Form", documentTitle: "Enterprise Order Form", status: "Draft", updated: "Updated Jul 26" }] },
-];
-
-function temporaryPassword() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#";
-  const values = crypto.getRandomValues(new Uint8Array(16));
-  return [...values].map((value) => alphabet[value % alphabet.length]).join("");
+function readableAction(action: string) {
+  const labels: Record<string, string> = {
+    "demo.created": "created the generic demonstration contract",
+    "contract.created": "created a contract from a Word document",
+    "document.uploaded": "uploaded a new Word document version",
+    "paragraph.updated": "edited a paragraph",
+    "paragraph_proposals.submitted": "submitted proposed paragraph changes",
+    "paragraph_proposal.accepted": "accepted a proposed change",
+    "paragraph_proposal.rejected": "rejected a proposed change",
+    "access.created": "created reviewer access",
+    "contract.agreed": "agreed to the current version",
+    "contract.locked": "locked the final agreed contract",
+    "document.downloaded": "downloaded the contract",
+  };
+  return labels[action] ?? action.replaceAll(".", " ");
 }
 
 export default function Home() {
-  const [blocks, setBlocks] = useState<DocumentBlock[]>(initialBlocks);
-  const [mode, setMode] = useState<"owner" | "client">("owner");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState("");
-  const [clientDrafts, setClientDrafts] = useState<Record<string, string>>({});
-  const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [statuses, setStatuses] = useState<Record<string, ReviewStatus>>({});
-  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
-  const [version, setVersion] = useState(3);
+  const [contracts, setContracts] = useState<ContractSummary[]>([]);
+  const [activeId, setActiveId] = useState("");
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [signIn, setSignIn] = useState("");
+  const [toast, setToast] = useState("");
   const [tab, setTab] = useState<"document" | "history" | "activity">("document");
   const [rail, setRail] = useState<"proposals" | "details">("proposals");
-  const [mobilePane, setMobilePane] = useState<"document" | "review">("document");
-  const [toast, setToast] = useState("");
-  const [importReview, setImportReview] = useState<Awaited<ReturnType<typeof inspectDocx>> | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [newContractOpen, setNewContractOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newFile, setNewFile] = useState<File | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
-  const [loginPreview, setLoginPreview] = useState(false);
-  const [clientSignedIn, setClientSignedIn] = useState(false);
+  const [credentials, setCredentials] = useState<Credentials | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
-  const [loginFields, setLoginFields] = useState({ username: "", password: "" });
-  const [loginError, setLoginError] = useState("");
-  const [companyMenuOpen, setCompanyMenuOpen] = useState(false);
-  const [selectedCompanyId, setSelectedCompanyId] = useState("brightline");
-  const [activeContractId, setActiveContractId] = useState("brightline-msa");
-  const [uploadedContracts, setUploadedContracts] = useState<Record<string, ContractItem[]>>({});
-  const [uploadingContract, setUploadingContract] = useState(false);
-  const [newContractTitle, setNewContractTitle] = useState("");
-  const [newContractFile, setNewContractFile] = useState<File | null>(null);
-  const modalRef = useRef<HTMLElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const selectedCompany = companies.find((company) => company.id === selectedCompanyId) ?? companies[0];
-  const companyContracts = [...selectedCompany.contracts, ...(uploadedContracts[selectedCompany.id] ?? [])];
-  const activeContract = companies.flatMap((company) => [...company.contracts, ...(uploadedContracts[company.id] ?? [])]).find((contract) => contract.id === activeContractId) ?? companies[0].contracts[0];
-  const openProposals = proposals.filter((proposal) => !statuses[proposal.id]);
-  const stagedCount = Object.keys(clientDrafts).length;
-  const selectedProposal = proposals.find((proposal) => proposal.id === selectedProposalId) ?? openProposals[0];
-  const paragraphNumber = useMemo(() => new Map(blocks.map((block, index) => [block.id, index + 1])), [blocks]);
+  const announce = useCallback((message: string) => {
+    setToast(message); window.setTimeout(() => setToast(""), 3000);
+  }, []);
 
-  function announce(message: string, duration = 2800) {
-    setToast(message);
-    window.setTimeout(() => setToast(""), duration);
-  }
+  const loadContract = useCallback(async (contractId: string) => {
+    setLoading(true); setError("");
+    const response = await fetch(`/api/contracts/${encodeURIComponent(contractId)}/workspace`, { cache: "no-store" });
+    const result = await response.json() as Workspace & { error?: string };
+    if (!response.ok) { setError(result.error ?? "Unable to load the contract"); setLoading(false); return; }
+    setWorkspace(result); setActiveId(contractId); setLoading(false);
+  }, []);
 
-  async function copy(value: string, label: string) {
-    await navigator.clipboard.writeText(value);
-    announce(`${label} copied.`);
-  }
-
-  function openShare() {
-    const next = credentials ?? { username: "brightline.maya", password: temporaryPassword() };
-    setCredentials(next);
-    setLoginFields({ username: next.username, password: "" });
-    setLoginPreview(false);
-    setClientSignedIn(false);
-    setLoginError("");
-    setShareOpen(true);
-  }
+  const loadWorkspace = useCallback(async (preferredId?: string) => {
+    setLoading(true); setError("");
+    const response = await fetch("/api/workspace", { cache: "no-store" });
+    const result = await response.json() as { owner?: { name: string }; contracts?: ContractSummary[]; error?: string; signIn?: string };
+    if (!response.ok) { setError(result.error ?? "Unable to open the workspace"); setSignIn(result.signIn ?? ""); setLoading(false); return; }
+    const nextContracts = result.contracts ?? []; setContracts(nextContracts);
+    const nextId = preferredId ?? activeId ?? nextContracts[0]?.id;
+    if (nextId) await loadContract(nextId); else setLoading(false);
+  }, [activeId, loadContract]);
 
   useEffect(() => {
-    if (!shareOpen) return;
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setShareOpen(false);
-      if (event.key !== "Tab" || !modalRef.current) return;
-      const focusable = [...modalRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-      const first = focusable[0]; const last = focusable.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [shareOpen]);
+    const timer = window.setTimeout(() => void loadWorkspace(), 0);
+    return () => window.clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function beginEdit(block: DocumentBlock) {
-    setEditingId(block.id);
-    setEditDraft(clientDrafts[block.id] ?? block.text);
+  const contract = workspace?.contract;
+  const clientParty = workspace?.parties.find((party) => party.role === "counterparty");
+  const ownerParty = workspace?.parties.find((party) => party.role === "initiator");
+  const pending = workspace?.proposals.filter((proposal) => proposal.status === "pending") ?? [];
+  const paragraphNumber = useMemo(() => new Map((workspace?.blocks ?? []).map((block, index) => [block.id, index + 1])), [workspace?.blocks]);
+  const ownerAgreed = Boolean(contract && workspace?.agreements.some((agreement) => agreement.role === "initiator" && agreement.version_number === contract.current_version));
+  const clientAgreed = Boolean(contract && workspace?.agreements.some((agreement) => agreement.role === "counterparty" && agreement.version_number === contract.current_version));
+  const locked = contract?.status === "locked";
+
+  async function saveParagraph(block: Block) {
+    if (!contract) return; setBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/blocks/${block.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: editDraft, baseVersion: contract.current_version }) });
+    const result = await response.json() as { error?: string };
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to save the paragraph"); return; }
+    setEditingId(null); announce("Paragraph saved in a new immutable version."); await loadWorkspace(contract.id);
   }
 
-  function saveParagraph(block: DocumentBlock) {
-    const next = editDraft.trim();
-    if (!next || next === block.text) { setEditingId(null); return; }
-    if (mode === "client") {
-      setClientDrafts((current) => ({ ...current, [block.id]: next }));
-      announce("Edit staged. Submit all edits when your review is complete.");
-    } else {
-      setBlocks((current) => current.map((item) => item.id === block.id ? { ...item, text: next } : item));
-      setVersion((current) => current + 1);
-      announce("Paragraph updated in a new document version.");
+  async function resolveProposal(proposal: Proposal, action: "accept" | "reject") {
+    if (!contract) return; setBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/paragraph-proposals/${proposal.id}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) });
+    const result = await response.json() as { error?: string };
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to resolve the proposal"); return; }
+    announce(action === "accept" ? "Change accepted into a new version." : "Change rejected and recorded."); await loadWorkspace(contract.id);
+  }
+
+  async function uploadVersion(file?: File) {
+    if (!file || !contract) return; setBusy(true);
+    if (contract.id === DEMO_CONTRACT_ID) { setBusy(false); announce("Create a new contract before uploading a private Word document."); return; }
+    const form = new FormData(); form.append("document", file);
+    const response = await fetch(`/api/contracts/${contract.id}/documents`, { method: "POST", body: form });
+    const result = await response.json() as { error?: string };
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to upload the Word document"); return; }
+    announce("New Word document imported as editable paragraphs."); await loadWorkspace(contract.id);
+  }
+
+  async function createContract() {
+    if (!newFile || !newTitle.trim()) return; setBusy(true);
+    const form = new FormData(); form.append("title", newTitle.trim()); form.append("document", newFile); form.append("clientCompany", "Client Company"); form.append("reviewerName", "Client Reviewer"); form.append("reviewerEmail", "reviewer@example.test");
+    const response = await fetch("/api/contracts", { method: "POST", body: form }); const result = await response.json() as { contract?: ContractSummary; error?: string };
+    setBusy(false); if (!response.ok || !result.contract) { announce(result.error ?? "Unable to create the contract"); return; }
+    setNewContractOpen(false); setSwitcherOpen(false); setNewTitle(""); setNewFile(null); announce("Contract created from the Word document."); await loadWorkspace(result.contract.id);
+  }
+
+  async function createAccess() {
+    if (!contract || !clientParty) return;
+    if (contract.id === DEMO_CONTRACT_ID) {
+      setCredentials({ username: DEMO_USERNAME, password: DEMO_PASSWORD, link: `${window.location.origin}/review/${contract.id}` }); setShareOpen(true); return;
     }
-    setEditingId(null);
+    const existing = workspace?.access.find((account) => account.status !== "revoked");
+    if (existing) { setCredentials({ username: existing.username, password: "Previously generated — create a new contract to issue fresh demo credentials", link: `${window.location.origin}/review/${contract.id}` }); setShareOpen(true); return; }
+    setBusy(true); const username = `reviewer.${contract.id.slice(0, 8)}`;
+    const response = await fetch(`/api/contracts/${contract.id}/access`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ partyId: clientParty.id, username, permission: "propose_changes" }) });
+    const result = await response.json() as { temporaryPassword?: string; account?: { username: string }; error?: string };
+    setBusy(false); if (!response.ok || !result.account || !result.temporaryPassword) { announce(result.error ?? "Unable to create reviewer access"); return; }
+    setCredentials({ username: result.account.username, password: result.temporaryPassword, link: `${window.location.origin}/review/${contract.id}` }); setShareOpen(true); await loadContract(contract.id);
   }
 
-  function discardClientDraft(blockId: string) {
-    setClientDrafts((current) => { const next = { ...current }; delete next[blockId]; return next; });
-    setEditingId(null);
+  async function agreeAsOwner() {
+    if (!contract) return; setBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/agree`, { method: "POST" }); const result = await response.json() as { locked?: boolean; error?: string };
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to record agreement"); return; }
+    announce(result.locked ? "Both parties agreed. The final document is locked." : "Your agreement is recorded for this version."); await loadWorkspace(contract.id);
   }
 
-  function submitClientChanges() {
-    const created = Object.entries(clientDrafts).map(([blockId, after], index) => ({ id: `client-${Date.now()}-${index}`, blockId, before: blocks.find((block) => block.id === blockId)?.text ?? "", after, author: "Maya Chen", username: "brightline.maya", time: "Just now" }));
-    setProposals((current) => [...created, ...current]);
-    setSelectedProposalId(created[0]?.id ?? null);
-    setClientDrafts({});
-    setRail("proposals");
-    announce(`${created.length} proposed ${created.length === 1 ? "change" : "changes"} sent to Northstar.`);
+  async function resetDemo() {
+    if (!contract || contract.id !== DEMO_CONTRACT_ID || !window.confirm("Reset the generic demo contract and remove its demonstration edits?")) return;
+    setBusy(true); const response = await fetch("/api/demo/reset", { method: "POST" }); const result = await response.json() as { error?: string };
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to reset the demo"); return; }
+    announce("The generic demo has been restored."); await loadWorkspace(DEMO_CONTRACT_ID);
   }
 
-  function resolveProposal(proposal: Proposal, status: ReviewStatus) {
-    setStatuses((current) => ({ ...current, [proposal.id]: status }));
-    if (status === "accepted") {
-      setBlocks((current) => current.map((block) => block.id === proposal.blockId ? { ...block, text: proposal.after } : block));
-      setVersion((current) => current + 1);
-    }
-    announce(status === "accepted" ? "Proposed paragraph edit accepted into a new version." : "Proposed edit rejected and recorded.");
-  }
+  async function copy(value: string, label: string) { await navigator.clipboard.writeText(value); announce(`${label} copied.`); }
+  function download(url: string) { const anchor = document.createElement("a"); anchor.href = url; anchor.click(); }
 
-  async function importWord(file?: File) {
-    if (!file) return;
-    try { setImportReview(await inspectDocx(file)); announce("Word document parsed. Review it before replacing the current document."); }
-    catch (error) { announce(error instanceof Error ? error.message : "The Word document could not be read.", 3400); }
-  }
+  if (error && !workspace) return <main className="review-portal"><section className="portal-card"><span className="brand-mark">P</span><h1>Pactline</h1><p>{error}</p>{signIn && <a className="primary-link" href={signIn}>Sign in as contract owner</a>}<button onClick={() => void loadWorkspace()}>Try again</button></section></main>;
+  if (loading && !workspace) return <main className="review-portal"><section className="portal-card"><span className="portal-spinner"/><p>Preparing your contract workspace…</p></section></main>;
 
-  function useImportedDocument() {
-    if (!importReview) return;
-    setBlocks(importReview.blocks);
-    setVersion((current) => current + 1);
-    setProposals([]); setStatuses({}); setClientDrafts({});
-    setImportReview(null);
-    announce("The uploaded Word document is now open as editable paragraphs.");
-  }
-
-  async function addContract() {
-    if (!newContractFile || !newContractTitle.trim()) return;
-    try {
-      const parsed = await inspectDocx(newContractFile);
-      const contract: ContractItem = { id: `${selectedCompany.id}-${Date.now()}`, title: newContractTitle.trim(), documentTitle: parsed.blocks.find((block) => block.kind === "title")?.text ?? newContractTitle.trim(), status: "Draft", updated: "Added just now", fileName: parsed.name };
-      setUploadedContracts((current) => ({ ...current, [selectedCompany.id]: [...(current[selectedCompany.id] ?? []), contract] }));
-      setActiveContractId(contract.id); setBlocks(parsed.blocks); setVersion(1); setProposals([]); setStatuses({}); setClientDrafts({});
-      setUploadingContract(false); setCompanyMenuOpen(false); setNewContractFile(null); setNewContractTitle("");
-      announce(`${contract.title} uploaded and opened.`);
-    } catch (error) { announce(error instanceof Error ? error.message : "Choose a valid Word document.", 3400); }
-  }
-
-  function chooseContract(companyId: string, contract: ContractItem) {
-    setSelectedCompanyId(companyId); setActiveContractId(contract.id); setCompanyMenuOpen(false); setUploadingContract(false);
-    setBlocks(initialBlocks); setVersion(3); setProposals([]); setStatuses({}); setClientDrafts({});
-    announce(`${contract.title} opened.`);
-  }
-
-  function exportWord() {
-    const blob = createDocumentDocx(activeContract.documentTitle, version, blocks);
-    const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
-    anchor.href = url; anchor.download = `${activeContract.title.replace(/\s+/g, "-")}-v${version}.docx`; anchor.click(); URL.revokeObjectURL(url);
-    announce(`${activeContract.title} version ${version} exported.`);
-  }
-
-  return <main className={`app-shell document-workspace ${mode === "client" ? "client-mode" : ""}`}>
-    {mode === "owner" && <aside className="sidebar"><div className="brand"><span className="brand-mark">P</span><span>Pactline</span></div><nav aria-label="Main navigation"><button className="nav-item active"><span>⌂</span> Contracts <b>8</b></button><button className="nav-item"><span>▤</span> Templates</button><button className="nav-item"><span>✓</span> Approvals</button><button className="nav-item"><span>◴</span> Activity</button></nav><div className="sidebar-bottom"><button className="nav-item"><span>⚙</span> Settings</button><div className="user"><span className="avatar">AK</span><div><strong>Alex Kim</strong><small>Legal Operations</small></div></div></div></aside>}
+  return <main className="app-shell document-workspace">
+    <aside className="sidebar"><div className="brand"><span className="brand-mark">P</span><span>Pactline</span></div><nav aria-label="Main navigation"><button className="nav-item active"><span>⌂</span> Contracts <b>{contracts.length}</b></button><button className="nav-item"><span>✓</span> Review queue <b>{contracts.reduce((sum, item) => sum + Number(item.pending_proposals), 0)}</b></button><button className="nav-item"><span>◴</span> Activity</button></nav><div className="sidebar-bottom"><div className="user"><span className="avatar">CO</span><div><strong>Contract Owner</strong><small>Personal workspace</small></div></div></div></aside>
     <section className="workspace">
-      <header className="topbar">
-        {mode === "owner" ? <div className="contract-switcher-wrap"><div className="crumb"><button className="crumb-back" onClick={() => setCompanyMenuOpen(true)}>All companies</button><b>/</b><button className="contract-switcher-button" aria-expanded={companyMenuOpen} onClick={() => setCompanyMenuOpen((open) => !open)}><strong>{activeContract.title}</strong><span>⌄</span></button></div>{companyMenuOpen && <section className="company-switcher" role="dialog" aria-label="Choose company and contract"><div className="company-list"><div className="switcher-heading"><span>Companies</span><small>{companies.length} active</small></div>{companies.map((company) => <button key={company.id} className={selectedCompany.id === company.id ? "active" : ""} onClick={() => { setSelectedCompanyId(company.id); setUploadingContract(false); }}><span className="company-initials">{company.initials}</span><span><strong>{company.name}</strong><small>{company.contracts.length + (uploadedContracts[company.id]?.length ?? 0)} contracts · {company.contacts.length} contacts</small></span><i>›</i></button>)}</div><div className="company-detail"><div className="switcher-heading"><div><small>Company</small><h2>{selectedCompany.name}</h2></div><button className="upload-contract-button" onClick={() => setUploadingContract(true)}>+ Upload Word document</button></div>{uploadingContract && <div className="contract-upload-form"><label>Contract name<input value={newContractTitle} onChange={(event) => setNewContractTitle(event.target.value)} placeholder="e.g. Services agreement" autoFocus /></label><label className="file-drop">Word document<input type="file" accept=".docx" onChange={(event) => setNewContractFile(event.target.files?.[0] ?? null)} /><span>{newContractFile?.name ?? "Choose a .docx file"}</span></label><div><button onClick={() => setUploadingContract(false)}>Cancel</button><button className="primary" disabled={!newContractTitle.trim() || !newContractFile} onClick={() => void addContract()}>Open document</button></div></div>}<div className="switcher-section"><h3>Contracts</h3>{companyContracts.map((contract) => <button className={`contract-option ${activeContract.id === contract.id ? "active" : ""}`} key={contract.id} onClick={() => chooseContract(selectedCompany.id, contract)}><span className="word-icon">W</span><span><strong>{contract.title}</strong><small>{contract.fileName ?? contract.documentTitle} · {contract.updated}</small></span><em>{contract.status}</em></button>)}</div><div className="switcher-section contacts"><h3>Contacts</h3>{selectedCompany.contacts.map((contact) => <div className="contact-row" key={contact.email}><span>{contact.name.split(" ").map((part) => part[0]).join("")}</span><div><strong>{contact.name}</strong><small>{contact.role} · {contact.email}</small></div></div>)}</div></div></section>}</div> : <div className="client-brand"><span className="brand-mark">P</span><div><strong>Client review</strong><small>{activeContract.title} · Signed in as Maya Chen</small></div></div>}
-        <div className="top-actions">{mode === "owner" ? <><span className="saved">✓ Saved</span><button className="client-preview-button" onClick={() => { setMode("client"); setMobilePane("document"); }}>Preview client view</button><button className="word-export" onClick={exportWord}><span className="word-icon">W</span> Export .docx</button><button className="share-button" onClick={openShare}>Share access <span>↗</span></button></> : <><span className="client-safe"><b>Review mode</b> Your edits will not change the original</span><button className="return-owner" onClick={() => setMode("owner")}>Return to owner view</button></>}</div>
-      </header>
+      <header className="topbar"><div className="contract-switcher-wrap"><div className="crumb"><button className="crumb-back" onClick={() => setSwitcherOpen(true)}>All contracts</button><b>/</b><button className="contract-switcher-button" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen((value) => !value)}><strong>{contract?.title ?? "Contract"}</strong><span>⌄</span></button></div>{switcherOpen && <section className="company-switcher compact-switcher" role="dialog" aria-label="Choose contract"><div className="company-detail"><div className="switcher-heading"><div><small>Personal workspace</small><h2>Contracts</h2></div><button className="upload-contract-button" onClick={() => setNewContractOpen(true)}>+ New contract</button></div>{newContractOpen && <div className="contract-upload-form"><label>Contract name<input value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="e.g. Consulting Agreement" /></label><label className="file-drop">Word document<input type="file" accept=".docx" onChange={(event) => setNewFile(event.target.files?.[0] ?? null)} /><span>{newFile?.name ?? "Choose a .docx file"}</span></label><div><button onClick={() => setNewContractOpen(false)}>Cancel</button><button className="primary" disabled={busy || !newTitle.trim() || !newFile} onClick={() => void createContract()}>{busy ? "Creating…" : "Create contract"}</button></div></div>}<div className="switcher-section">{contracts.map((item) => <button className={`contract-option ${item.id === activeId ? "active" : ""}`} key={item.id} onClick={() => { setSwitcherOpen(false); void loadContract(item.id); }}><span className="word-icon">W</span><span><strong>{item.title}</strong><small>{item.client_company} · Version {item.current_version}</small></span><em>{item.status}</em></button>)}</div></div></section>}</div><div className="top-actions"><span className="saved">✓ Persisted</span><a className="client-preview-button" href={contract ? `/review/${contract.id}` : "#"} target="_blank">Open client view</a><button className="word-export" onClick={() => contract && download(`/api/contracts/${contract.id}/download`)}><span className="word-icon">W</span> Download</button><button className="share-button" disabled={busy || !contract} onClick={() => void createAccess()}>Share access <span>↗</span></button></div></header>
 
-      <div className="contract-header"><div><div className="title-row"><h1>{activeContract.documentTitle}</h1><span className="status-pill"><i /> {mode === "client" ? "Client review" : activeContract.status}</span></div><p>Northstar Labs <span>↔</span> {selectedCompany.name} <b>•</b> Version {version}</p></div>{mode === "client" && <div className="client-reviewer"><span>MC</span><div><strong>Maya Chen</strong><small>Edits are attributed to your account</small></div></div>}</div>
+      <div className="contract-header"><div><div className="title-row"><h1>{contract?.title}</h1><span className={`status-pill ${locked ? "locked-pill" : ""}`}><i /> {locked ? "Agreed and locked" : contract?.status}</span></div><p>{ownerParty?.company ?? "Owner Company"} <span>↔</span> {clientParty?.company ?? "Client Company"} <b>•</b> Version {contract?.current_version}</p></div><div className="people"><span className="person-avatar p1">CO</span><span className="person-avatar p2">CR</span><div><strong>2 parties</strong><small>Every action attributed</small></div></div></div>
 
-      {mode === "owner" && <div className="progress-wrap"><div className="progress-line">{[["Drafted","Jul 24"],["Approved","Jul 25"],["Shared","Jul 26"],["Negotiating",`${openProposals.length} open`],["Agreed","—"]].map(([label,meta],index)=><div className={`step ${index<3?"done":index===3?"current":""}`} key={label}><span>{index<3?"✓":index+1}</span><div><strong>{label}</strong><small>{meta}</small></div></div>)}</div></div>}
+      <div className="progress-wrap"><div className="progress-line">{[["Drafted",true],["Shared",Boolean(workspace?.access.length)],["Negotiating",!locked],["Owner agreed",ownerAgreed],["Final agreement",locked]].map(([label,done],index) => <div className={`step ${done ? "done" : index === 2 ? "current" : ""}`} key={String(label)}><span>{done ? "✓" : index + 1}</span><div><strong>{label}</strong><small>{label === "Negotiating" ? `${pending.length} open` : done ? "Complete" : "Waiting"}</small></div></div>)}</div></div>
 
-      <div className="mobile-pane-bar"><button className={mobilePane === "document" ? "active" : ""} onClick={() => setMobilePane("document")}>Document</button>{mode === "owner" && <button className={mobilePane === "review" ? "active" : ""} onClick={() => setMobilePane("review")}>Proposed edits <span>{openProposals.length}</span></button>}</div>
+      <div className="content-grid"><section className="document-panel"><div className="tabs"><button className={tab === "document" ? "active" : ""} onClick={() => setTab("document")}>Document</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Version history <span>{workspace?.versions.length ?? 0}</span></button><button className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Audit activity</button><div className="version-select">Version {contract?.current_version}</div></div>
+        <div className="word-bar"><div className="word-file"><span className="word-icon">W</span><div><strong>{workspace?.documents[0]?.filename ?? `${contract?.title}.docx`}</strong><small>{contract?.id === DEMO_CONTRACT_ID ? "Public sample · Create a new contract for private files" : "Private Word document · Paragraph review · Immutable versions"}</small></div><span className="synced">✓ Stored</span></div><div className="word-controls"><label className="import-word" aria-disabled={busy || locked || contract?.id === DEMO_CONTRACT_ID}>↑ Upload new version<input ref={fileRef} type="file" accept=".docx" disabled={busy || locked || contract?.id === DEMO_CONTRACT_ID} onChange={(event) => void uploadVersion(event.target.files?.[0])} /></label><button onClick={() => contract && download(`/api/contracts/${contract.id}/download`)}>Download</button></div></div>
+        {tab === "document" && <div className="word-page"><div className="word-page-meta"><span>{locked ? "Final agreed document" : "Editable working document"}</span><span>{workspace?.blocks.length ?? 0} paragraphs</span></div><div className="document-flow">{workspace?.blocks.map((block) => <section className={`doc-paragraph ${block.kind}`} key={block.id}>{editingId === block.id ? <div className="paragraph-editor"><label htmlFor={`block-${block.id}`}>Edit paragraph</label><textarea id={`block-${block.id}`} value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={Math.max(3, Math.ceil(editDraft.length / 85))} autoFocus/><div><button onClick={() => setEditingId(null)}>Cancel</button><button className="primary" disabled={busy || !editDraft.trim() || editDraft.trim() === block.current_text} onClick={() => void saveParagraph(block)}>Save new version</button></div></div> : <button className="paragraph-content" disabled={locked} aria-label={`Edit paragraph ${paragraphNumber.get(block.id)}`} onClick={() => { setEditingId(block.id); setEditDraft(block.current_text); }}><span>{block.current_text}</span><i>{locked ? "Locked" : "Edit"}</i></button>}</section>)}</div></div>}
+        {tab === "history" && <div className="empty-tab"><h2>Version history</h2><p>Every accepted change and owner edit creates a complete immutable snapshot.</p>{workspace?.versions.map((version) => <div className="history-row" key={version.id}><span className="version-dot">v{version.version_number}</span><div><strong>{version.version_number === contract?.current_version ? "Current document" : "Previous document version"}</strong><small>{new Date(version.created_at).toLocaleString()} · {version.document_sha256 ? "File checksum stored" : "Paragraph snapshot stored"}</small></div></div>)}</div>}
+        {tab === "activity" && <div className="empty-tab"><h2>Audit activity</h2><p>Uploads, edits, proposals, decisions, agreements, and downloads are attributed.</p>{workspace?.activity.map((item) => <div className="activity-row" key={item.id}><span>{item.actor_display.split(" ").map((part) => part[0]).join("").slice(0,2)}</span><div><strong>{item.actor_display} {readableAction(item.action)}</strong><small>{new Date(item.created_at).toLocaleString()}{item.version_number ? ` · Version ${item.version_number}` : ""}</small></div></div>)}</div>}
+      </section>
 
-      <div className={`content-grid mobile-${mobilePane} ${mode === "client" ? "client-content" : ""}`}>
-        <section className="document-panel">
-          <div className="tabs"><button className={tab === "document" ? "active" : ""} onClick={() => setTab("document")}>Document</button>{mode === "owner" && <><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Version history <span>{version}</span></button><button className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Audit activity</button></>}<div className="version-select">Version {version} <span>⌄</span></div></div>
-          <div className="word-bar"><div className="word-file"><span className="word-icon">W</span><div><strong>{activeContract.title} v{version}.docx</strong><small>Word document · Paragraph-level editing · Stable clause controls</small></div><span className="synced">✓ Synced</span></div>{mode === "owner" ? <div className="word-controls"><label className="import-word">↑ Upload new .docx<input type="file" accept=".docx" onChange={(event) => void importWord(event.target.files?.[0])} /></label><button onClick={exportWord}>Download</button></div> : <span className="client-edit-help">Click any paragraph to propose an edit</span>}</div>
-
-          {importReview && <div className="import-review"><span className="word-icon">W</span><div><strong>{importReview.name}</strong><p>{importReview.paragraphs.length} paragraphs found · {(importReview.size/1024).toFixed(1)} KB</p></div><button onClick={() => setImportReview(null)}>Cancel</button><button className="primary" onClick={useImportedDocument}>Use this document</button></div>}
-
-          {tab === "document" && <div className="word-page"><div className="word-page-meta"><span>Page 1 of {blocks.length > 16 ? 2 : 1}</span><span>{blocks.length} paragraphs</span></div>{mode === "client" && <div className="client-instructions"><span>✎</span><div><strong>Suggest changes directly in the document</strong><p>Edit as many paragraphs as you need. Nothing changes until the owner accepts your proposals.</p></div></div>}<div className="document-flow">{blocks.map((block) => { const staged = clientDrafts[block.id]; const editing = editingId === block.id; return <div className={`doc-paragraph ${block.kind} ${staged ? "staged" : ""} ${editing ? "editing" : ""}`} key={block.id}>{editing ? <div className="paragraph-editor"><label htmlFor={`paragraph-${block.id}`}>{mode === "client" ? "Proposed paragraph text" : "Edit paragraph"}</label><textarea id={`paragraph-${block.id}`} value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={Math.max(3, Math.ceil(editDraft.length/85))} autoFocus /><div><button onClick={() => setEditingId(null)}>Cancel</button>{mode === "client" && staged && <button className="discard" onClick={() => discardClientDraft(block.id)}>Discard proposal</button>}<button className="primary" disabled={!editDraft.trim() || editDraft.trim() === block.text} onClick={() => saveParagraph(block)}>{mode === "client" ? "Stage proposal" : "Save new version"}</button></div></div> : <button className="paragraph-content" onClick={() => beginEdit(block)} aria-label={`${mode === "client" ? "Propose edit to" : "Edit"} paragraph ${paragraphNumber.get(block.id)}`}><span>{staged ?? block.text}</span><i>{staged ? "Proposed" : "Edit"}</i></button>}{staged && !editing && <div className="staged-note"><span>Proposed change</span><button onClick={() => beginEdit(block)}>Revise</button><button onClick={() => discardClientDraft(block.id)}>Discard</button></div>}</div>;})}</div></div>}
-
-          {tab === "history" && <div className="empty-tab"><h2>Version history</h2><p>Every accepted or owner-saved paragraph change creates a full document snapshot.</p>{Array.from({length:Math.min(version,5)},(_,index)=>version-index).map((value,index)=><div className="history-row" key={value}><span className="version-dot">v{value}</span><div><strong>{index===0?"Current document":"Previous document version"}</strong><small>{index===0?"Current · Integrity hash recorded":`${index} day${index===1?"":"s"} ago · Verified actor`}</small></div><button onClick={()=>announce(`Comparing version ${value}.`)}>Compare</button></div>)}</div>}
-          {tab === "activity" && <div className="empty-tab"><h2>Audit activity</h2><p>Every paragraph edit, proposal, decision, and export is attributed to a named account.</p>{["Maya Chen opened the shared Word document","Alex Kim uploaded Brightline MSA.docx","Jordan Lee approved external review"].map((item,index)=><div className="activity-row" key={item}><span>{index===0?"MC":index===1?"AK":"JL"}</span><div><strong>{item}</strong><small>{18+index*32} minutes ago · Authenticated account</small></div></div>)}</div>}
-        </section>
-
-        {mode === "owner" && <aside className="review-rail"><div className="rail-tabs"><button className={rail === "proposals" ? "active" : ""} onClick={() => setRail("proposals")}>Proposed edits <span>{openProposals.length}</span></button><button className={rail === "details" ? "active" : ""} onClick={() => setRail("details")}>Details</button></div>{rail === "proposals" ? <><div className="rail-heading"><div><h2>Client changes</h2><p>Paragraph edits submitted for your decision</p></div></div><div className="proposal-scroll">{proposals.length === 0 && <div className="all-clear"><span>✓</span><h3>No proposed edits yet</h3><p>Open “Preview client view” to see how the counterparty edits and submits the document.</p></div>}{proposals.map((proposal) => { const status = statuses[proposal.id]; return <article className={`proposal-card ${selectedProposal?.id === proposal.id ? "selected" : ""} ${status ? "resolved" : ""}`} key={proposal.id} onClick={() => setSelectedProposalId(proposal.id)}><div className="proposal-meta"><span className="mini-avatar">MC</span><div><strong>{proposal.author}</strong><small>{proposal.username} · {proposal.time}</small></div>{status ? <span className={`status-text ${status}`}>{status}</span> : <span className="pending-dot">Pending</span>}</div><h3>Paragraph {paragraphNumber.get(proposal.blockId)} edited</h3><div className="ai-label"><span>✦</span> AI-structured proposal <i>Human submitted</i></div><div className="diff"><div className="removed"><span>−</span><p>{proposal.before}</p></div><div className="added"><span>+</span><p>{proposal.after}</p></div></div>{!status && <div className="decision-row"><button className="accept" onClick={(event) => { event.stopPropagation(); resolveProposal(proposal,"accepted"); }}>✓ Accept change</button><button onClick={(event) => { event.stopPropagation(); resolveProposal(proposal,"rejected"); }}>Reject</button></div>}</article>;})}</div></> : <div className="details-panel"><h2>Document details</h2><dl><dt>Owner</dt><dd>Alex Kim</dd><dt>Counterparty</dt><dd>{selectedCompany.contacts[0]?.name}<br/><small>{selectedCompany.contacts[0]?.email}</small></dd><dt>Source</dt><dd>{activeContract.fileName ?? `${activeContract.title}.docx`}<br/><small>{blocks.length} editable paragraphs</small></dd><dt>Review model</dt><dd>Client proposals<br/><small>Owner approval required</small></dd><dt>Current version</dt><dd>Version {version}<br/><small>Full snapshot retained</small></dd></dl></div>}</aside>}
-      </div>
-
-      {mode === "client" && <div className="client-submit-bar"><div><strong>{stagedCount ? `${stagedCount} proposed ${stagedCount === 1 ? "change" : "changes"} ready` : "Review the document paragraph by paragraph"}</strong><small>{stagedCount ? "The owner will receive before-and-after text for every edit." : "Click a paragraph to begin editing."}</small></div><button disabled={!stagedCount} onClick={submitClientChanges}>Submit {stagedCount || ""} proposed {stagedCount === 1 ? "change" : "changes"}</button></div>}
+      <aside className="review-rail"><div className="rail-tabs"><button className={rail === "proposals" ? "active" : ""} onClick={() => setRail("proposals")}>Proposed edits <span>{pending.length}</span></button><button className={rail === "details" ? "active" : ""} onClick={() => setRail("details")}>Details</button></div>{rail === "proposals" ? <><div className="rail-heading"><div><h2>Client changes</h2><p>Paragraph edits submitted for your decision</p></div></div><div className="proposal-scroll">{!workspace?.proposals.length && <div className="all-clear"><span>✓</span><h3>No proposed edits yet</h3><p>Share client access to begin a review round.</p></div>}{workspace?.proposals.map((proposal) => <article className={`proposal-card ${proposal.status !== "pending" ? "resolved" : ""}`} key={proposal.id}><div className="proposal-meta"><span className="mini-avatar">CR</span><div><strong>{proposal.proposed_by_name}</strong><small>{proposal.username} · {new Date(proposal.created_at).toLocaleString()}</small></div><span className={proposal.status === "pending" ? "pending-dot" : `status-text ${proposal.status}`}>{proposal.status}</span></div><h3>Paragraph {paragraphNumber.get(proposal.block_id)} edited</h3><div className="diff"><div className="removed"><span>−</span><p>{proposal.original_text}</p></div><div className="added"><span>+</span><p>{proposal.proposed_text}</p></div></div>{proposal.status === "pending" && <div className="decision-row"><button className="accept" disabled={busy} onClick={() => void resolveProposal(proposal, "accept")}>✓ Accept change</button><button disabled={busy} onClick={() => void resolveProposal(proposal, "reject")}>Reject</button></div>}</article>)}</div></> : <div className="details-panel"><h2>Document details</h2><dl><dt>Owner</dt><dd>{ownerParty?.name}<br/><small>{ownerParty?.company}</small></dd><dt>Reviewer</dt><dd>{clientParty?.name}<br/><small>{clientParty?.email}</small></dd><dt>Source</dt><dd>{workspace?.documents[0]?.filename}<br/><small>Private object storage · Unscanned MVP file</small></dd><dt>Version</dt><dd>Version {contract?.current_version}<br/><small>{workspace?.versions.length} immutable snapshots</small></dd><dt>Owner agreement</dt><dd>{ownerAgreed ? "Recorded" : "Waiting"}</dd><dt>Client agreement</dt><dd>{clientAgreed ? "Recorded" : "Waiting"}</dd></dl><div className="agreement-panel"><strong>{locked ? "Final agreement complete" : "Ready to agree?"}</strong><p>{locked ? "This version is locked. Both parties can download the same final Word document." : pending.length ? "Resolve every pending proposal before agreeing." : "Your agreement applies only to the current version and resets if the document changes."}</p><button className="agreement-button" disabled={busy || locked || ownerAgreed || pending.length > 0} onClick={() => void agreeAsOwner()}>{ownerAgreed ? "Owner agreement recorded" : "Agree to this version"}</button>{locked && <button className="secondary-download" onClick={() => contract && download(`/api/contracts/${contract.id}/download`)}>Download final DOCX</button>}</div>{contract?.id === DEMO_CONTRACT_ID && <button className="reset-demo-button" disabled={busy} onClick={() => void resetDemo()}>Reset generic demo</button>}</div>}</aside></div>
     </section>
 
-    {shareOpen && credentials && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareOpen(false); }}><section ref={modalRef} className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><button ref={closeRef} className="modal-close" aria-label="Close sharing dialog" onClick={() => setShareOpen(false)}>×</button>{!loginPreview ? <><div className="modal-kicker">🔒 Named, password-protected client access</div><h2 id="share-title">Share with Maya Chen</h2><p className="modal-lead">Maya can edit paragraphs and submit proposed changes. She cannot overwrite the original document.</p><div className="access-identity"><span className="client-avatar">MC</span><div><strong>Maya Chen</strong><small>maya@brightline.studio · Brightline Studio</small></div><span className="access-role">Reviewer</span></div><div className="credential-grid"><label><span>Secure contract link</span><div><code>pactline.app/review/bl-2048</code><button onClick={() => void copy("https://pactline.app/review/bl-2048","Link")}>Copy</button></div></label><label><span>Username</span><div><code>{credentials.username}</code><button onClick={() => void copy(credentials.username,"Username")}>Copy</button></div></label><label><span>Temporary password</span><div><code>{passwordVisible ? credentials.password : "••••••••••••••••"}</code><button onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible?"Hide":"Show"}</button></div></label></div><div className="modal-actions"><button className="preview-login" onClick={() => setLoginPreview(true)}>Preview client login</button><button className="copy-package" onClick={() => void copy(`Contract: https://pactline.app/review/bl-2048\nUsername: ${credentials.username}\nTemporary password: ${credentials.password}`,"Access package")}>Copy access package</button></div></> : !clientSignedIn ? <form className="login-form" onSubmit={(event) => { event.preventDefault(); if(loginFields.username===credentials.username && loginFields.password===credentials.password){setClientSignedIn(true);setLoginError("");}else setLoginError("The username or password is incorrect."); }}><span className="login-lock">🔒</span><h2 id="share-title">Sign in to review</h2><p>{activeContract.documentTitle}<br/><b>Northstar Labs ↔ {selectedCompany.name}</b></p><label htmlFor="client-username">Username</label><input id="client-username" value={loginFields.username} onChange={(event)=>setLoginFields((current)=>({...current,username:event.target.value}))}/><label htmlFor="client-password">Temporary password</label><input id="client-password" type="password" value={loginFields.password} onChange={(event)=>setLoginFields((current)=>({...current,password:event.target.value}))}/>{loginError&&<p className="form-error">{loginError}</p>}<button type="submit">Sign in securely</button></form> : <div className="login-success"><span>✓</span><h2>Signed in as Maya Chen</h2><p>You can propose paragraph edits. The original stays unchanged until Northstar accepts them.</p><button onClick={() => { setShareOpen(false); setMode("client"); }}>Open client review</button></div>}</section></div>}
+    {shareOpen && credentials && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareOpen(false); }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><button className="modal-close" aria-label="Close sharing dialog" onClick={() => setShareOpen(false)}>×</button><div className="modal-kicker">🔒 Named, password-protected review</div><h2 id="share-title">Share with Client Reviewer</h2><p className="modal-lead">The reviewer can propose paragraph edits and agree to the final version. They cannot overwrite the owner document.</p><div className="access-identity"><span className="client-avatar">CR</span><div><strong>{clientParty?.name}</strong><small>{clientParty?.email} · {clientParty?.company}</small></div><span className="access-role">Reviewer</span></div><div className="credential-grid"><label><span>Secure contract link</span><div><code>{credentials.link}</code><button onClick={() => void copy(credentials.link, "Link")}>Copy</button></div></label><label><span>Username</span><div><code>{credentials.username}</code><button onClick={() => void copy(credentials.username, "Username")}>Copy</button></div></label><label><span>Temporary password</span><div><code>{passwordVisible ? credentials.password : "••••••••••••••••"}</code><button onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label></div><div className="modal-actions"><a className="preview-login" href={credentials.link} target="_blank">Open client login</a><button className="copy-package" onClick={() => void copy(`Contract: ${credentials.link}\nUsername: ${credentials.username}\nPassword: ${credentials.password}`, "Access package")}>Copy access package</button></div></section></div>}
     <div className="toast-region" aria-live="polite">{toast && <div className="toast"><span>✓</span>{toast}</div>}</div>
   </main>;
 }

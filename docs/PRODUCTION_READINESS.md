@@ -1,38 +1,33 @@
-# Pactline production readiness
+# Pactline phase-one readiness
 
-## Implemented in this hardening pass
+## Ready for a small private demo
 
-- Durable paragraph-oriented document model aligned with the natural Word editing interface.
-- Durable paragraph proposals with base-version checks and stale-text conflict detection.
-- Private owner workspace API for contracts, paragraphs, proposals, parties, and document metadata.
-- Dedicated external review route at `/review/:contractId`.
-- Named reviewer login with PBKDF2-SHA256 password hashing, uniform verification work, eight-attempt lockout, expiry, opaque token hashing, revocable server sessions, and `HttpOnly; Secure; SameSite=Strict` cookies.
-- Owner-only reviewer-access creation with one-time temporary password return and a maximum 90-day expiry.
-- Reviewer-specific proposal submission limited to the assigned contract and permission.
-- Owner-only paragraph proposal acceptance/rejection with optimistic concurrency, immutable snapshots, content hashes, and audit records.
-- Payload limits and no-store cache controls on authentication and contract workspace responses.
-- Automated build, schema, security, entropy, password verification, and stale-edit invariant tests.
-- GitHub CI and Dependabot checks; the production dependency audit currently reports zero vulnerabilities.
+- Cloudflare D1 stores contracts, parties, paragraph content, reviewer access, proposals, immutable versions, agreements, sessions, and audit activity.
+- Cloudflare R2 stores the original and generated DOCX files outside the database.
+- The owner can create a contract from a DOCX, edit any paragraph, upload later DOCX versions, accept or reject client proposals, inspect history, agree, and download.
+- A named client reviewer signs into a contract-specific workspace, proposes paragraph replacements, agrees to a version, and downloads the locked final DOCX.
+- Any accepted edit creates a new immutable version. Agreement is version-specific and the contract locks only after both parties agree to the same version with no pending proposals.
+- The generic sample is resettable and deliberately refuses private DOCX uploads. Private files must use a newly created contract with unique reviewer credentials.
+- DOCX input is limited to 15 MB, macro-enabled packages are rejected, passwords are PBKDF2-hashed, sessions are opaque and revocable, and production dependencies have no known audit findings.
+- ONLYOFFICE, email delivery, password recovery, Slack, Teams, and paid services remain disabled.
 
-## Required before real customer contracts
+## Intentional phase-one limitations
 
-1. Enable hosted D1/R2 resources and apply every migration in a staging environment.
-2. Connect the owner interface to the new workspace/access APIs; the current owner page still uses seeded demo state for its visual prototype.
-3. Add a malware and content-disarm pipeline. Uploaded DOCX objects must remain quarantined until scan status is `clean`.
-4. Add a background DOCX processor that preserves tables, lists, headers, footnotes, comments, images, and style runs. The browser parser currently handles headings and paragraphs only.
-5. Configure a production document editor such as ONLYOFFICE with signed callbacks and review-mode restrictions if pixel-level Word fidelity is required.
-6. Add transactional email delivery for one-time credentials, password reset, access revocation, and review notifications.
-7. Add edge rate limiting by hashed IP and account, bot detection, security-event alerting, and organization-level allow/deny policies.
-8. Add observability: structured logs, request correlation, error reporting, latency/error SLOs, audit export, backup/restore drills, and R2 retention policies.
-9. Complete legal/security review covering data residency, encryption key management, subprocessors, retention, legal hold, e-signature requirements, and SOC 2 controls.
-10. Run staging tests with representative contracts containing tables, exhibits, tracked changes, signatures, and documents near the size limit.
+- DOCX round-tripping is paragraph-oriented. Rich tables, images, comments, footnotes, headers, complex lists, and existing tracked-change markup are not preserved with full Microsoft Word fidelity.
+- Uploaded files are labeled unscanned. Use only documents from people you trust until malware scanning and content disarm are added.
+- Reviewer credentials are copied manually. There is no email, self-service password setup, or password reset flow yet.
+- The product is designed for one owner and a handful of reviewers, not multi-tenant company deployment.
+- D1 and R2 should remain inside their free allowances for this intended use, but Cloudflare account limits still apply.
 
-The full development dependency tree currently retains one high-severity advisory in the latest Cloudflare local-development toolchain and moderate legacy tooling under Drizzle Kit. Automated fixes require incompatible downgrades. This is documented in `SECURITY.md`; production dependencies are clean, and development servers must remain limited to trusted interfaces.
+## Gates before real customer or sensitive contracts
 
-## Release gates
+1. Add malware scanning and quarantine enforcement before a file becomes authoritative.
+2. Add verified email invitations, password setup/reset, stronger account recovery, and optional MFA.
+3. Add rate limiting, abuse protection, structured monitoring, alerts, backup/restore drills, and data-retention controls.
+4. Test representative documents containing tables, exhibits, images, tracked changes, signatures, and near-limit file sizes.
+5. Complete privacy, legal, data-residency, retention, e-signature, and security reviews.
+6. Introduce ONLYOFFICE or another licensed document engine only if in-browser, pixel-level Word fidelity becomes a validated product need.
 
-- No quarantined document can become authoritative.
-- No client route trusts an account, company, contract, or actor supplied by the browser.
-- Every mutation is authorized server-side, version-scoped, idempotent where retryable, and written to the audit log.
-- Every accepted edit creates an immutable document snapshot and invalidates agreement on prior versions.
-- Authentication, proposal, upload, version-conflict, revocation, backup, restore, accessibility, and responsive workflows pass in staging.
+## Release rule
+
+Use the hosted build for demonstrations and low-risk personal collaboration only. Do not upload confidential, regulated, or irreplaceable documents in this phase.
