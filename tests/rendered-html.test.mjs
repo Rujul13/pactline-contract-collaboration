@@ -79,7 +79,7 @@ test("retains the security controls for reviewer sessions", async () => {
   ]);
   for (const table of ["document_blocks", "paragraph_proposals", "access_sessions"]) assert.ok(migration.includes(`CREATE TABLE \`${table}\``), `missing ${table} table`);
   assert.match(security, /PBKDF2/);
-  assert.match(security, /210_000/);
+  assert.match(security, /100_000/);
   assert.match(clientAuth, /HttpOnly; Secure; SameSite=Strict/);
   assert.match(clientAuth, /failed_attempts < 8/);
   assert.match(accessRoute, /temporaryPassword/);

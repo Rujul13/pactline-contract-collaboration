@@ -1,5 +1,6 @@
 const encoder = new TextEncoder();
-const PASSWORD_ITERATIONS = 210_000;
+// Cloudflare Workers currently cap Web Crypto PBKDF2 at 100,000 iterations.
+const PASSWORD_ITERATIONS = 100_000;
 
 function toBase64Url(bytes: Uint8Array) {
   let binary = "";

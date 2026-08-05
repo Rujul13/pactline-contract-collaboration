@@ -3,7 +3,7 @@ import { randomToken, sha256Hex, verifyPassword } from "./security";
 
 const COOKIE_NAME = "__Host-pactline_client";
 const SESSION_HOURS = 8;
-const DUMMY_PASSWORD_HASH = "pbkdf2-sha256$210000$AAAAAAAAAAAAAAAAAAAAAA$txVYa3yFdETfi3_MgZXwxY9NGktxRMFAMTHU2JXGB6U";
+const DUMMY_PASSWORD_HASH = "pbkdf2-sha256$100000$AAAAAAAAAAAAAAAAAAAAAA$txVYa3yFdETfi3_MgZXwxY9NGktxRMFAMTHU2JXGB6U";
 
 type AccountRow = { id: string; contract_id: string; party_id: string; username: string; password_hash: string; permission: string; status: string; failed_attempts: number; expires_at: string; name: string; company: string; email: string };
 export type ClientSession = { sessionId: string; accountId: string; contractId: string; partyId: string; username: string; permission: string; name: string; company: string; email: string };

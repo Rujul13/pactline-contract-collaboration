@@ -7,10 +7,10 @@ test("password hashes are salted, slow, and verifiable", async () => {
   const first = await hashPassword(password);
   const second = await hashPassword(password);
   assert.notEqual(first, second);
-  assert.match(first, /^pbkdf2-sha256\$210000\$/);
+  assert.match(first, /^pbkdf2-sha256\$100000\$/);
   assert.equal(await verifyPassword(password, first), true);
   assert.equal(await verifyPassword("incorrect-password", first), false);
-  assert.equal(await verifyPassword(password, first.replace("210000", "1000")), false);
+  assert.equal(await verifyPassword(password, first.replace("100000", "1000")), false);
 });
 
 test("temporary credentials and session tokens have sufficient entropy", () => {
