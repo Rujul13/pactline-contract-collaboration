@@ -4,7 +4,7 @@ import { ensureDemoWorkspace } from "@/lib/demo";
 
 export async function GET() {
   const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required", signIn: "/signin-with-chatgpt?return_to=%2F" }, { status: 401 });
+  if (!user) return Response.json({ error: "Authentication required", signIn: "/owner/login?return_to=%2F" }, { status: 401 });
   await ensureDemoWorkspace(user);
   const contracts = await env.DB.prepare(`
     SELECT c.id, c.title, c.status, c.current_version, c.locked_at, c.updated_at,
@@ -20,4 +20,3 @@ export async function GET() {
   `).bind(user.userId).all();
   return Response.json({ owner: { name: "Contract Owner", email: user.email }, contracts: contracts.results }, { headers: { "cache-control": "private, no-store" } });
 }
-

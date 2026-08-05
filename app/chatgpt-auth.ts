@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { ownerFromSession } from "@/lib/owner-auth";
 
 export type ChatGPTUser = {
   userId: string;
@@ -14,8 +15,8 @@ const USER_FULL_NAME_HEADER = "oai-authenticated-user-full-name";
 const USER_FULL_NAME_ENCODING_HEADER =
   "oai-authenticated-user-full-name-encoding";
 const PERCENT_ENCODED_UTF8 = "percent-encoded-utf-8";
-const SIGN_IN_PATH = "/signin-with-chatgpt";
-const SIGN_OUT_PATH = "/signout-with-chatgpt";
+const SIGN_IN_PATH = "/owner/login";
+const SIGN_OUT_PATH = "/api/owner/logout";
 const CALLBACK_PATH = "/callback";
 
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
@@ -27,7 +28,7 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     if (host.startsWith("127.0.0.1:") || host.startsWith("localhost:")) {
       return { userId: "local-contract-owner", displayName: "Contract Owner", email: "owner@example.test", fullName: "Contract Owner" };
     }
-    return null;
+    return ownerFromSession(requestHeaders.get("cookie"));
   }
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
