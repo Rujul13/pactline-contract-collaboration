@@ -93,7 +93,7 @@ jobs:
           ' "$RUNNER_TEMP/workers-subdomain-final.json")
           echo "CLOUDFLARE_WORKERS_SUBDOMAIN=$FINAL_SUBDOMAIN" >> "$GITHUB_ENV"
 
-      - name: Prepare owner workspace secrets
+      - name: Configure owner authentication
         env:
           OWNER_PASSWORD: ${{ secrets.OWNER_PASSWORD }}
         shell: bash
@@ -103,19 +103,24 @@ jobs:
             exit 1
           fi
           node --input-type=module -e '
+            import fs from "node:fs";
             import { pbkdf2Sync, randomBytes } from "node:crypto";
             const salt = randomBytes(16);
             const value = pbkdf2Sync(process.env.OWNER_PASSWORD, salt, 210000, 32, "sha256");
             const passwordHash = `pbkdf2-sha256$210000$${salt.toString("base64url")}$${value.toString("base64url")}`;
-            process.stdout.write(JSON.stringify({
-              OWNER_PASSWORD: process.env.OWNER_PASSWORD,
-              OWNER_PASSWORD_HASH: passwordHash,
-              OWNER_SESSION_SECRET: randomBytes(48).toString("base64url"),
-            }));
-          ' > "$RUNNER_TEMP/pactline-secrets.json"
+            const sessionSecret = randomBytes(48).toString("base64url");
+            const quote = (input) => input.replaceAll("'", "''");
+            fs.writeFileSync(process.argv[1], `
+              INSERT INTO app_settings (key, value, updated_at) VALUES ('owner_password_hash', '${quote(passwordHash)}', CURRENT_TIMESTAMP)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+              INSERT INTO app_settings (key, value, updated_at) VALUES ('owner_session_secret', '${quote(sessionSecret)}', CURRENT_TIMESTAMP)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+            `);
+          ' "$RUNNER_TEMP/owner-settings.sql"
+          npx wrangler d1 execute "$CLOUDFLARE_D1_DATABASE_NAME" --remote --config dist/server/wrangler.json --file "$RUNNER_TEMP/owner-settings.sql"
 
-      - name: Publish application with owner secrets
-        run: npx wrangler deploy --config dist/server/wrangler.json --secrets-file "$RUNNER_TEMP/pactline-secrets.json"
+      - name: Publish application
+        run: npx wrangler deploy --config dist/server/wrangler.json
 
       - name: Verify live owner authentication
         env:

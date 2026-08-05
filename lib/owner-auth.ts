@@ -22,6 +22,15 @@ function ownerEnvironment(): OwnerEnvironment {
   };
 }
 
+async function ownerSetting(key: "owner_password_hash" | "owner_session_secret") {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first<{ value: string }>();
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function base64Url(bytes: Uint8Array) {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -59,7 +68,7 @@ function cookieValue(cookieHeader: string | null) {
 }
 
 export async function ownerFromSession(cookieHeader: string | null) {
-  const secret = ownerEnvironment().OWNER_SESSION_SECRET;
+  const secret = ownerEnvironment().OWNER_SESSION_SECRET ?? await ownerSetting("owner_session_secret");
   const token = cookieValue(cookieHeader);
   if (!secret || !token) return null;
 
@@ -82,7 +91,8 @@ export async function ownerFromSession(cookieHeader: string | null) {
 export async function verifyOwnerPassword(password: string) {
   if (typeof password !== "string") return false;
   const ownerEnv = ownerEnvironment();
-  if (ownerEnv.OWNER_PASSWORD_HASH && await verifyPassword(password, ownerEnv.OWNER_PASSWORD_HASH)) return true;
+  const passwordHash = ownerEnv.OWNER_PASSWORD_HASH ?? await ownerSetting("owner_password_hash");
+  if (passwordHash && await verifyPassword(password, passwordHash)) return true;
   const storedPassword = ownerEnv.OWNER_PASSWORD;
   if (!storedPassword || password.length !== storedPassword.length) return false;
   let difference = 0;
@@ -93,7 +103,7 @@ export async function verifyOwnerPassword(password: string) {
 }
 
 export async function createOwnerSessionCookie() {
-  const secret = ownerEnvironment().OWNER_SESSION_SECRET;
+  const secret = ownerEnvironment().OWNER_SESSION_SECRET ?? await ownerSetting("owner_session_secret");
   if (!secret) throw new Error("Owner session secret is not configured");
   const expiresAt = Date.now() + SESSION_HOURS * 60 * 60 * 1000;
   const expiresText = String(expiresAt);
