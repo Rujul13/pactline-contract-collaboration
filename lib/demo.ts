@@ -9,8 +9,8 @@ export const DEMO_USERNAME = "client.reviewer";
 export const DEMO_PASSWORD = "ReviewDemo!2026";
 
 export const demoBlocks: DocumentBlock[] = [
-  { id: "sample-block-1", kind: "title", text: "SAMPLE SERVICES AGREEMENT" },
-  { id: "sample-block-2", kind: "body", text: "This Sample Services Agreement (the “Agreement”) is entered into between Owner Company and Client Company as of the effective date shown in the final signed copy." },
+  { id: "sample-block-1", kind: "title", text: "MASTER SERVICES AGREEMENT" },
+  { id: "sample-block-2", kind: "body", text: "This Master Services Agreement (the “Agreement”) is entered into between Owner Company and Client Company as of the effective date shown in the final signed copy." },
   { id: "sample-block-3", kind: "body", text: "The parties agree that the following terms govern the services described in each statement of work issued under this Agreement." },
   { id: "sample-block-4", kind: "heading", text: "1. Services" },
   { id: "sample-block-5", kind: "body", text: "Owner Company will provide the professional services described in each applicable statement of work, including the deliverables, schedule, fees, and acceptance criteria." },
@@ -55,7 +55,7 @@ export async function ensureDemoWorkspace(user: ChatGPTUser) {
   const snapshot = blockRows.map((block) => ({ id: block.id, block_key: `paragraph-${block.orderIndex + 1}`, order_index: block.orderIndex, kind: block.kind, current_text: block.text }));
 
   await db.batch([
-    db.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, status, current_version, created_at, updated_at) VALUES (?, 'Sample Services Agreement', ?, ?, 'negotiating', 1, ?, ?)").bind(DEMO_CONTRACT_ID, ownerId, ownerId, now, now),
+    db.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, status, current_version, created_at, updated_at) VALUES (?, 'Demo Master Services Agreement', ?, ?, 'negotiating', 1, ?, ?)").bind(DEMO_CONTRACT_ID, ownerId, ownerId, now, now),
     db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'initiator', 'Contract Owner', 'Owner Company', 'owner@example.test', ?, ?)").bind(ownerPartyId, DEMO_CONTRACT_ID, now, now),
     db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'counterparty', 'Client Reviewer', 'Client Company', 'reviewer@example.test', ?, ?)").bind(clientPartyId, DEMO_CONTRACT_ID, now, now),
     db.prepare("INSERT INTO access_accounts (id, contract_id, party_id, username, password_hash, permission, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'propose_changes', 'invited', '2099-12-31T23:59:59.000Z', ?, ?)").bind(accountId, DEMO_CONTRACT_ID, clientPartyId, DEMO_USERNAME, passwordHash, now, now),
@@ -64,13 +64,13 @@ export async function ensureDemoWorkspace(user: ChatGPTUser) {
     db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, 'Contract Owner', 'demo.created', 'contract', ?, 1, ?, json(?), ?)").bind(crypto.randomUUID(), DEMO_CONTRACT_ID, ownerId, DEMO_CONTRACT_ID, crypto.randomUUID(), JSON.stringify({ genericDemo: true }), now),
   ]);
 
-  const blob = createDocumentDocx("Sample Services Agreement", 1, demoBlocks);
+  const blob = createDocumentDocx("Demo Master Services Agreement", 1, demoBlocks);
   const bytes = await blob.arrayBuffer();
   const sha256 = await sha256BufferHex(bytes);
-  const objectKey = `contracts/${DEMO_CONTRACT_ID}/versions/1/sample-services-agreement.docx`;
+  const objectKey = `contracts/${DEMO_CONTRACT_ID}/versions/1/demo-master-services-agreement.docx`;
   await env.DOCUMENTS.put(objectKey, bytes, { httpMetadata: { contentType: blob.type }, customMetadata: { contractId: DEMO_CONTRACT_ID, version: "1" } });
   await db.batch([
-    db.prepare("INSERT INTO document_objects (id, contract_id, object_key, filename, content_type, byte_size, sha256, scan_status, uploaded_by, created_at) VALUES (?, ?, ?, 'Sample Services Agreement.docx', ?, ?, ?, 'pending', ?, ?)").bind("sample-document-1", DEMO_CONTRACT_ID, objectKey, blob.type, bytes.byteLength, sha256, ownerId, now),
+    db.prepare("INSERT INTO document_objects (id, contract_id, object_key, filename, content_type, byte_size, sha256, scan_status, uploaded_by, created_at) VALUES (?, ?, ?, 'Demo Master Services Agreement.docx', ?, ?, ?, 'pending', ?, ?)").bind("sample-document-1", DEMO_CONTRACT_ID, objectKey, blob.type, bytes.byteLength, sha256, ownerId, now),
     db.prepare("UPDATE contract_versions SET document_object_key = ?, document_sha256 = ? WHERE id = ?").bind(objectKey, sha256, versionId),
   ]);
   return { ownerId, contractId: DEMO_CONTRACT_ID };

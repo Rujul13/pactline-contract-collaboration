@@ -2,7 +2,7 @@
 
 ## Five-minute walkthrough
 
-1. Open the owner workspace. The generic **Sample Services Agreement** is ready automatically.
+1. Open the owner workspace. The generic **Demo Master Services Agreement** is ready automatically. Use **Download demo DOCX** if you want a local copy for the presentation.
 2. Edit any paragraph and save it to demonstrate direct owner drafting and version history.
 3. Select **Share client access** and copy the review link, username, and password.
 4. Open the review link in a private browser window. Sign in as the client and propose a replacement for one paragraph.
@@ -20,4 +20,4 @@ These credentials protect demonstration data only and are intentionally shared. 
 
 ## Private-document flow
 
-Choose **New contract**, enter a title, and upload a `.docx` file up to 15 MB. Then use **Share client access** once to generate contract-specific reviewer credentials. Store the displayed temporary password before closing the dialog.
+Choose **New contract**, or select **Upload your DOCX** while viewing the demo. Pick a `.docx` file up to 15 MB, confirm its automatically suggested title, and select **Upload and create**. Then use **Share client access** once to generate contract-specific reviewer credentials. Store the displayed temporary password before closing the dialog.

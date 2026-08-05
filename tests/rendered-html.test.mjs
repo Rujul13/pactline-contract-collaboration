@@ -13,7 +13,9 @@ test("defines the persistent generic Pactline workspace", async () => {
   assert.match(page, /Share access/);
   assert.match(page, /Reset generic demo/);
   assert.match(page, /\/api\/workspace/);
-  assert.match(demo, /Sample Services Agreement/);
+  assert.match(demo, /Demo Master Services Agreement/);
+  assert.match(page, /Upload your DOCX/);
+  assert.match(page, /Download demo DOCX/);
   for (const removedName of ["Alex Kim", "Maya Chen", "Brightline", "Northstar"]) assert.doesNotMatch(page + demo, new RegExp(removedName));
   assert.doesNotMatch(page, /react-loading-skeleton|codex-preview/);
 });
@@ -28,7 +30,9 @@ test("stores Word uploads separately from structured contract data", async () =>
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "DOCUMENTS"/);
   assert.match(createRoute, /env\.DOCUMENTS\.put/);
+  assert.match(createRoute, /15 \* 1024 \* 1024/);
   assert.match(uploadRoute, /contract_versions/);
+  assert.doesNotMatch(uploadRoute, /file\.type !== DOCX_TYPE/);
   assert.match(parser, /word\/vbaProject\.bin/);
   assert.match(parser, /valid DOCX package/);
 });

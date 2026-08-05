@@ -18,7 +18,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   const form = await request.formData();
   const file = form.get("document");
   if (!(file instanceof File)) return Response.json({ error: "A DOCX document is required" }, { status: 400 });
-  if (!file.name.toLowerCase().endsWith(".docx") || file.type !== DOCX_TYPE) return Response.json({ error: "Only modern .docx Word documents are accepted" }, { status: 415 });
+  if (!file.name.toLowerCase().endsWith(".docx")) return Response.json({ error: "Only modern .docx Word documents are accepted" }, { status: 415 });
   if (file.size <= 0 || file.size > MAX_DOCX_BYTES) return Response.json({ error: "The DOCX document must be between 1 byte and 15 MB" }, { status: 413 });
 
   const body = await file.arrayBuffer();

@@ -16,6 +16,7 @@ export async function POST(request: Request) {
   const reviewerEmail = String(form.get("reviewerEmail") ?? "reviewer@example.test").trim().slice(0, 254) || "reviewer@example.test";
   if (!title || !(file instanceof File)) return Response.json({ error: "A contract title and DOCX document are required" }, { status: 400 });
   if (!file.name.toLowerCase().endsWith(".docx")) return Response.json({ error: "Only .docx Word documents are accepted" }, { status: 415 });
+  if (file.size <= 0 || file.size > 15 * 1024 * 1024) return Response.json({ error: "The DOCX document must be between 1 byte and 15 MB" }, { status: 413 });
   const bytes = await file.arrayBuffer();
   let blocks;
   try { blocks = parseDocxBytes(bytes); } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Unable to read the Word document" }, { status: 400 }); }
@@ -44,4 +45,3 @@ export async function POST(request: Request) {
   }
   return Response.json({ contract: { id: contractId, title, status: "draft", current_version: 1 } }, { status: 201 });
 }
-
