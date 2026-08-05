@@ -6,6 +6,7 @@ const SESSION_HOURS = 12;
 
 type OwnerEnvironment = {
   OWNER_EMAIL?: string;
+  OWNER_PASSWORD?: string;
   OWNER_PASSWORD_HASH?: string;
   OWNER_SESSION_SECRET?: string;
 };
@@ -72,9 +73,16 @@ export async function ownerFromSession(cookieHeader: string | null) {
 }
 
 export async function verifyOwnerPassword(password: string) {
-  const stored = ownerEnvironment().OWNER_PASSWORD_HASH;
-  if (!stored || typeof password !== "string") return false;
-  return verifyPassword(password, stored);
+  if (typeof password !== "string") return false;
+  const ownerEnv = ownerEnvironment();
+  if (ownerEnv.OWNER_PASSWORD_HASH && await verifyPassword(password, ownerEnv.OWNER_PASSWORD_HASH)) return true;
+  const storedPassword = ownerEnv.OWNER_PASSWORD;
+  if (!storedPassword || password.length !== storedPassword.length) return false;
+  let difference = 0;
+  for (let index = 0; index < password.length; index += 1) {
+    difference |= password.charCodeAt(index) ^ storedPassword.charCodeAt(index);
+  }
+  return difference === 0;
 }
 
 export async function createOwnerSessionCookie() {

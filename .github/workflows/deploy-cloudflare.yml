@@ -111,6 +111,7 @@ jobs:
             const value = pbkdf2Sync(process.env.OWNER_PASSWORD, salt, 210000, 32, "sha256");
             const passwordHash = `pbkdf2-sha256$210000$${salt.toString("base64url")}$${value.toString("base64url")}`;
             process.stdout.write(JSON.stringify({
+              OWNER_PASSWORD: process.env.OWNER_PASSWORD,
               OWNER_PASSWORD_HASH: passwordHash,
               OWNER_SESSION_SECRET: randomBytes(48).toString("base64url"),
             }));
