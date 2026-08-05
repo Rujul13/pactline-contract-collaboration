@@ -81,6 +81,17 @@ jobs:
               --header "Content-Type: application/json" \
               --data '{"subdomain":"pactline-rujul13"}'
           fi
+          curl --fail-with-body --silent --show-error \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --output "$RUNNER_TEMP/workers-subdomain-final.json"
+          FINAL_SUBDOMAIN=$(node --input-type=module -e '
+            import fs from "node:fs";
+            const response = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!response.result?.subdomain) throw new Error("workers.dev subdomain is unavailable");
+            process.stdout.write(response.result.subdomain);
+          ' "$RUNNER_TEMP/workers-subdomain-final.json")
+          echo "CLOUDFLARE_WORKERS_SUBDOMAIN=$FINAL_SUBDOMAIN" >> "$GITHUB_ENV"
 
       - name: Publish application
         run: npx wrangler deploy --config dist/server/wrangler.json
@@ -98,6 +109,33 @@ jobs:
             import { pbkdf2Sync, randomBytes } from "node:crypto";
             const salt = randomBytes(16);
             const value = pbkdf2Sync(process.env.OWNER_PASSWORD, salt, 210000, 32, "sha256");
-            process.stdout.write(`pbkdf2-sha256$210000$${salt.toString("base64url")}$${value.toString("base64url")}`);
-          ' | npx wrangler secret put OWNER_PASSWORD_HASH --config dist/server/wrangler.json
-          node --input-type=module -e 'import { randomBytes } from "node:crypto"; process.stdout.write(randomBytes(48).toString("base64url"));' | npx wrangler secret put OWNER_SESSION_SECRET --config dist/server/wrangler.json
+            const passwordHash = `pbkdf2-sha256$210000$${salt.toString("base64url")}$${value.toString("base64url")}`;
+            process.stdout.write(JSON.stringify({
+              OWNER_PASSWORD_HASH: passwordHash,
+              OWNER_SESSION_SECRET: randomBytes(48).toString("base64url"),
+            }));
+          ' | npx wrangler secret bulk --config dist/server/wrangler.json
+
+      - name: Verify live owner authentication
+        env:
+          OWNER_PASSWORD: ${{ secrets.OWNER_PASSWORD }}
+        shell: bash
+        run: |
+          BASE_URL="https://pactline-contract-collaboration.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev"
+          LOGIN_BODY=$(node --input-type=module -e 'process.stdout.write(JSON.stringify({ password: process.env.OWNER_PASSWORD, returnTo: "/" }));')
+          curl --fail-with-body --silent --show-error \
+            --cookie-jar "$RUNNER_TEMP/owner-cookies.txt" \
+            --header "Content-Type: application/json" \
+            --data "$LOGIN_BODY" \
+            "$BASE_URL/api/owner/login"
+          curl --fail-with-body --silent --show-error \
+            --cookie "$RUNNER_TEMP/owner-cookies.txt" \
+            "$BASE_URL/api/workspace" \
+            --output "$RUNNER_TEMP/workspace.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const workspace = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!workspace.contracts?.some((contract) => contract.id === "sample-services-agreement")) {
+              throw new Error("Authenticated workspace did not seed the demo contract");
+            }
+          ' "$RUNNER_TEMP/workspace.json"
