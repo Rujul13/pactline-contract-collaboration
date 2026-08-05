@@ -5,7 +5,18 @@ import { ensureDemoWorkspace } from "@/lib/demo";
 export async function GET() {
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: "Authentication required", signIn: "/owner/login?return_to=%2F" }, { status: 401 });
-  await ensureDemoWorkspace(user);
+  try {
+    await ensureDemoWorkspace(user);
+  } catch (error) {
+    console.error("Unable to prepare the owner workspace", error);
+    return Response.json(
+      {
+        error: "Unable to prepare workspace",
+        detail: error instanceof Error ? error.message : "Unknown workspace error",
+      },
+      { status: 500 },
+    );
+  }
   const contracts = await env.DB.prepare(`
     SELECT c.id, c.title, c.status, c.current_version, c.locked_at, c.updated_at,
       counterparty.name AS reviewer_name, counterparty.company AS client_company,
