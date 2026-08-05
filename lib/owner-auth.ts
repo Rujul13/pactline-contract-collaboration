@@ -12,7 +12,14 @@ type OwnerEnvironment = {
 };
 
 function ownerEnvironment(): OwnerEnvironment {
-  return env as unknown as OwnerEnvironment;
+  const bindingEnvironment = env as unknown as OwnerEnvironment;
+  const nodeEnvironment = typeof process === "undefined" ? {} : process.env;
+  return {
+    OWNER_EMAIL: bindingEnvironment.OWNER_EMAIL ?? nodeEnvironment.OWNER_EMAIL,
+    OWNER_PASSWORD: bindingEnvironment.OWNER_PASSWORD ?? nodeEnvironment.OWNER_PASSWORD,
+    OWNER_PASSWORD_HASH: bindingEnvironment.OWNER_PASSWORD_HASH ?? nodeEnvironment.OWNER_PASSWORD_HASH,
+    OWNER_SESSION_SECRET: bindingEnvironment.OWNER_SESSION_SECRET ?? nodeEnvironment.OWNER_SESSION_SECRET,
+  };
 }
 
 function base64Url(bytes: Uint8Array) {
