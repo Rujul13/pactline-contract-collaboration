@@ -13,6 +13,8 @@ test("defines the persistent generic Pactline workspace", async () => {
   assert.match(page, /Share access/);
   assert.match(page, /Reset generic demo/);
   assert.match(page, /\/api\/workspace/);
+  assert.match(page, /preferredId \|\| activeId \|\| nextContracts\[0\]\?\.id/);
+  assert.match(page, /visibilitychange/);
   assert.match(demo, /Demo Master Services Agreement/);
   assert.match(page, /Upload your DOCX/);
   assert.match(page, /Download demo DOCX/);

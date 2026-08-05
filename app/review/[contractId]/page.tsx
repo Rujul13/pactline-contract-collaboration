@@ -25,6 +25,15 @@ export default function ClientReviewPage({ params }: { params: Promise<{ contrac
 
   useEffect(() => { void params.then(({ contractId: id }) => { setContractId(id); return loadWorkspace(id); }); }, [params, loadWorkspace]);
 
+  useEffect(() => {
+    if (!contractId) return;
+    const refresh = () => { if (!document.hidden) void loadWorkspace(contractId); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 15_000);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); window.clearInterval(timer); };
+  }, [contractId, loadWorkspace]);
+
   async function signIn(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
     const response = await fetch("/api/client/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(credentials) });

@@ -78,7 +78,7 @@ export default function Home() {
     const result = await response.json() as { owner?: { name: string }; contracts?: ContractSummary[]; error?: string; signIn?: string };
     if (!response.ok) { setError(result.error ?? "Unable to open the workspace"); setSignIn(result.signIn ?? ""); setLoading(false); return; }
     const nextContracts = result.contracts ?? []; setContracts(nextContracts);
-    const nextId = preferredId ?? activeId ?? nextContracts[0]?.id;
+    const nextId = preferredId || activeId || nextContracts[0]?.id;
     if (nextId) await loadContract(nextId); else setLoading(false);
   }, [activeId, loadContract]);
 
@@ -86,6 +86,15 @@ export default function Home() {
     const timer = window.setTimeout(() => void loadWorkspace(), 0);
     return () => window.clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!activeId) return;
+    const refresh = () => { if (!document.hidden) void loadWorkspace(activeId); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 15_000);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); window.clearInterval(timer); };
+  }, [activeId, loadWorkspace]);
 
   const contract = workspace?.contract;
   const clientParty = workspace?.parties.find((party) => party.role === "counterparty");
