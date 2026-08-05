@@ -48,10 +48,16 @@ test("supports durable paragraph proposals and immutable owner decisions", async
   ]);
   assert.match(clientPage, /Submit proposed changes/);
   assert.match(page, /Accept change/);
+  assert.match(page, /Counter propose/);
   assert.match(page, /Reject/);
+  assert.match(page, /scrollIntoView/);
+  assert.match(page, /openReviewQueue/);
+  assert.match(clientPage, /Owner counterproposal/);
   assert.match(proposalRoute, /The document changed during your review/);
   assert.match(resolutionRoute, /contract_versions/);
   assert.match(resolutionRoute, /paragraph_proposal\.accepted/);
+  assert.match(resolutionRoute, /paragraph_proposal\.countered/);
+  assert.match(resolutionRoute, /counter_text/);
 });
 
 test("locks only the version agreed by both parties and supports final downloads", async () => {

@@ -11,7 +11,7 @@ export async function GET(request: Request, context: { params: Promise<{ contrac
   const [contract, blocks, proposals, agreements] = await Promise.all([
     env.DB.prepare("SELECT id, title, status, current_version, updated_at FROM contracts WHERE id = ?").bind(contractId).first(),
     env.DB.prepare("SELECT id, block_key, order_index, kind, current_text FROM document_blocks WHERE contract_id = ? ORDER BY order_index").bind(contractId).all(),
-    env.DB.prepare("SELECT id, block_id, base_version, original_text, proposed_text, rationale, status, created_at FROM paragraph_proposals WHERE contract_id = ? AND proposed_by_account_id = ? ORDER BY created_at DESC").bind(contractId, session.accountId).all(),
+    env.DB.prepare("SELECT id, block_id, base_version, original_text, proposed_text, counter_text, rationale, status, created_at FROM paragraph_proposals WHERE contract_id = ? AND proposed_by_account_id = ? ORDER BY created_at DESC").bind(contractId, session.accountId).all(),
     env.DB.prepare("SELECT party_id, version_number FROM agreements WHERE contract_id=? AND version_number=(SELECT current_version FROM contracts WHERE id=?)").bind(contractId, contractId).all(),
   ]);
   if (!contract) return Response.json({ error: "Contract not found" }, { status: 404 });
@@ -40,7 +40,10 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     ids.add(blockId); prepared.push({ id: crypto.randomUUID(), blockId, original, proposed, rationale: edit.rationale?.trim().slice(0, 2000) || null });
   }
   const now = new Date().toISOString(); const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
-  const statements = prepared.map((edit) => env.DB.prepare("INSERT INTO paragraph_proposals (id, contract_id, block_id, base_version, proposed_by_account_id, original_text, proposed_text, rationale, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)").bind(edit.id, contractId, edit.blockId, body.baseVersion, session.accountId, edit.original, edit.proposed, edit.rationale, now, now));
+  const statements = prepared.flatMap((edit) => [
+    env.DB.prepare("UPDATE paragraph_proposals SET status = 'superseded', updated_at = ? WHERE contract_id = ? AND block_id = ? AND proposed_by_account_id = ? AND status = 'countered'").bind(now, contractId, edit.blockId, session.accountId),
+    env.DB.prepare("INSERT INTO paragraph_proposals (id, contract_id, block_id, base_version, proposed_by_account_id, original_text, proposed_text, rationale, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)").bind(edit.id, contractId, edit.blockId, body.baseVersion, session.accountId, edit.original, edit.proposed, edit.rationale, now, now),
+  ]);
   statements.push(env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposals.submitted', 'contract', ?, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, requestId, JSON.stringify({ proposalIds: prepared.map((edit) => edit.id), count: prepared.length, baseVersion: body.baseVersion }), now));
   await env.DB.batch(statements);
   return Response.json({ proposals: prepared.map((edit) => ({ id: edit.id, blockId: edit.blockId, status: "pending" })) }, { status: 201 });

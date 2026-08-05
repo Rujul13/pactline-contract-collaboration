@@ -8,9 +8,9 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   const user = await getChatGPTUser();
   if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
   const { contractId, proposalId } = await context.params;
-  let body: { action?: "accept" | "reject" };
+  let body: { action?: "accept" | "reject" | "counter"; counterText?: string };
   try { body = await request.json() as typeof body; } catch { return Response.json({ error: "Valid JSON is required" }, { status: 400 }); }
-  if (!body.action || !["accept", "reject"].includes(body.action)) return Response.json({ error: "Action must be accept or reject" }, { status: 400 });
+  if (!body.action || !["accept", "reject", "counter"].includes(body.action)) return Response.json({ error: "Action must be accept, reject, or counter" }, { status: 400 });
   const owner = await env.DB.prepare("SELECT c.id FROM contracts c JOIN users u ON u.id = c.initiator_id WHERE c.id = ? AND u.external_identity_id = ?").bind(contractId, user.userId).first();
   if (!owner) return Response.json({ error: "Contract not found" }, { status: 404 });
   const proposal = await env.DB.prepare(`SELECT p.*, b.current_text, c.current_version, c.status AS contract_status FROM paragraph_proposals p JOIN document_blocks b ON b.id = p.block_id JOIN contracts c ON c.id = p.contract_id WHERE p.id = ? AND p.contract_id = ?`).bind(proposalId, contractId).first<ProposalRow>();
@@ -25,6 +25,17 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     ]);
     if ((results[0].meta.changes ?? 0) !== 1) return Response.json({ error: "Resolution conflicted with another request" }, { status: 409 });
     return Response.json({ status: "rejected", versionNumber: proposal.current_version });
+  }
+  if (body.action === "counter") {
+    const counterText = body.counterText?.trim();
+    if (!counterText || counterText.length < 10 || counterText.length > 50_000) return Response.json({ error: "Counterproposal must contain between 10 and 50,000 characters" }, { status: 400 });
+    if (counterText === proposal.original_text || counterText === proposal.proposed_text) return Response.json({ error: "Counterproposal must differ from both existing versions" }, { status: 400 });
+    const results = await env.DB.batch([
+      env.DB.prepare("UPDATE paragraph_proposals SET status = 'countered', counter_text = ?, resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(counterText, now, user.userId, now, proposalId),
+      env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.countered', 'paragraph_proposal', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, proposal.current_version, requestId, JSON.stringify({ blockId: proposal.block_id, counterText }), now),
+    ]);
+    if ((results[0].meta.changes ?? 0) !== 1) return Response.json({ error: "Resolution conflicted with another request" }, { status: 409 });
+    return Response.json({ status: "countered", versionNumber: proposal.current_version });
   }
   const nextVersion = proposal.current_version + 1; const blocks = await env.DB.prepare("SELECT id, block_key, order_index, kind, current_text FROM document_blocks WHERE contract_id = ? ORDER BY order_index").bind(contractId).all<Record<string, unknown>>();
   const snapshot = blocks.results.map((block) => ({ ...block, current_text: block.id === proposal.block_id ? proposal.proposed_text : block.current_text }));
