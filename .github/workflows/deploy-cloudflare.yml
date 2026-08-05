@@ -93,10 +93,7 @@ jobs:
           ' "$RUNNER_TEMP/workers-subdomain-final.json")
           echo "CLOUDFLARE_WORKERS_SUBDOMAIN=$FINAL_SUBDOMAIN" >> "$GITHUB_ENV"
 
-      - name: Publish application
-        run: npx wrangler deploy --config dist/server/wrangler.json
-
-      - name: Protect the owner workspace
+      - name: Prepare owner workspace secrets
         env:
           OWNER_PASSWORD: ${{ secrets.OWNER_PASSWORD }}
         shell: bash
@@ -115,7 +112,10 @@ jobs:
               OWNER_PASSWORD_HASH: passwordHash,
               OWNER_SESSION_SECRET: randomBytes(48).toString("base64url"),
             }));
-          ' | npx wrangler secret bulk --config dist/server/wrangler.json
+          ' > "$RUNNER_TEMP/pactline-secrets.json"
+
+      - name: Publish application with owner secrets
+        run: npx wrangler deploy --config dist/server/wrangler.json --secrets-file "$RUNNER_TEMP/pactline-secrets.json"
 
       - name: Verify live owner authentication
         env:
