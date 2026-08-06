@@ -1,13 +1,14 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { parseDocxBytes, sha256BufferHex } from "@/lib/docx-server";
 import { sha256Hex } from "@/lib/security";
 
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   const form = await request.formData();
   const file = form.get("document");
   const title = String(form.get("title") ?? "").trim().slice(0, 160);

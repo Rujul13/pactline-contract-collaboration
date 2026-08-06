@@ -195,11 +195,11 @@ jobs:
           node --input-type=module <<'NODE'
             import fs from "node:fs";
             const workspace = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/reviewer-workspace.json`, "utf8"));
-            const block = workspace.blocks.find((item) => item.kind === "body" && item.current_text.length > 40);
-            if (!block) throw new Error("Reviewer smoke test could not find an editable paragraph");
+            const blocks = workspace.blocks.filter((item) => item.kind === "body" && item.current_text.length > 40).slice(0, 2);
+            if (blocks.length !== 2) throw new Error("Reviewer smoke test could not find two editable paragraphs");
             fs.writeFileSync(`${process.env.RUNNER_TEMP}/proposal-body.json`, JSON.stringify({
               baseVersion: workspace.contract.current_version,
-              edits: [{ blockId: block.id, originalText: block.current_text, proposedText: `${block.current_text} Deployment verification.` }],
+              edits: blocks.map((block, index) => ({ blockId: block.id, originalText: block.current_text, proposedText: `${block.current_text} Deployment verification ${index + 1}.` })),
             }));
           NODE
           curl --fail-with-body --silent --show-error \
@@ -208,23 +208,54 @@ jobs:
             --data-binary "@$RUNNER_TEMP/proposal-body.json" \
             "$BASE_URL/api/client/contracts/sample-services-agreement/proposals" \
             --output "$RUNNER_TEMP/proposal-result.json"
-          PROPOSAL_ID=$(node --input-type=module -e '
+          PROPOSAL_IDS=$(node --input-type=module -e '
             import fs from "node:fs";
             const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-            if (!result.proposals?.[0]?.id) throw new Error("Reviewer proposal smoke test failed");
-            process.stdout.write(result.proposals[0].id);
+            if (result.proposals?.length !== 2) throw new Error("Reviewer proposal smoke test failed");
+            process.stdout.write(result.proposals.map((proposal) => proposal.id).join(" "));
           ' "$RUNNER_TEMP/proposal-result.json")
+          read -r PROPOSAL_ID_1 PROPOSAL_ID_2 <<< "$PROPOSAL_IDS"
+
+          # A reviewer cookie must never authorize owner-only APIs, even when called directly.
+          assert_reviewer_forbidden() {
+            local METHOD="$1"
+            local URL="$2"
+            local BODY="${3:-}"
+            local ARGS=(--silent --show-error --request "$METHOD" --cookie "$RUNNER_TEMP/reviewer-cookies.txt" --output "$RUNNER_TEMP/forbidden.json" --write-out "%{http_code}")
+            if [ -n "$BODY" ]; then ARGS+=(--header "Content-Type: application/json" --data "$BODY"); fi
+            STATUS=$(curl "${ARGS[@]}" "$URL")
+            if [ "$STATUS" != "403" ]; then
+              echo "Reviewer reached owner-only endpoint $URL (HTTP $STATUS)" >&2
+              cat "$RUNNER_TEMP/forbidden.json" >&2
+              exit 1
+            fi
+          }
+          assert_reviewer_forbidden POST "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_1/resolve" '{"action":"accept"}'
+          assert_reviewer_forbidden POST "$BASE_URL/api/contracts/sample-services-agreement/ai-suggestions/apply" '{"baseVersion":1,"operation":"replace_block","targetBlockId":"forged","replacementText":"forged"}'
+          assert_reviewer_forbidden GET "$BASE_URL/api/contracts/sample-services-agreement/download"
+
           curl --fail-with-body --silent --show-error \
             --cookie "$RUNNER_TEMP/owner-cookies.txt" \
             --header "Content-Type: application/json" \
             --data '{"action":"accept"}' \
-            "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID/resolve" \
-            --output "$RUNNER_TEMP/accept-result.json"
+            "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_1/resolve" \
+            --output "$RUNNER_TEMP/accept-result-1.json"
           node --input-type=module -e '
             import fs from "node:fs";
             const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
             if (result.status !== "accepted" || result.versionNumber !== 2) throw new Error("Owner acceptance smoke test failed");
-          ' "$RUNNER_TEMP/accept-result.json"
+          ' "$RUNNER_TEMP/accept-result-1.json"
+          curl --fail-with-body --silent --show-error \
+            --cookie "$RUNNER_TEMP/owner-cookies.txt" \
+            --header "Content-Type: application/json" \
+            --data '{"action":"accept"}' \
+            "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_2/resolve" \
+            --output "$RUNNER_TEMP/accept-result-2.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (result.status !== "accepted" || result.versionNumber !== 3) throw new Error("Rebased sibling proposal could not be accepted");
+          ' "$RUNNER_TEMP/accept-result-2.json"
           curl --fail-with-body --silent --show-error --request POST \
             --cookie "$RUNNER_TEMP/owner-cookies.txt" \
             "$BASE_URL/api/demo/reset" >/dev/null

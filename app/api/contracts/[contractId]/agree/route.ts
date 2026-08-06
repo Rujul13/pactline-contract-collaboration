@@ -1,11 +1,12 @@
-import { getChatGPTUser } from "../../../../chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { recordInitiatorAgreement } from "../../../../../lib/agreements";
 import { DomainError } from "../../../../../lib/domain-error";
 import { ensureFinalDocument } from "../../../../../lib/contract-download";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   try {
     const { contractId } = await context.params;
     const result = await recordInitiatorAgreement(contractId, { id: user.userId, display: user.displayName, requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(), ipAddress: request.headers.get("cf-connecting-ip") ?? undefined, userAgent: request.headers.get("user-agent") ?? undefined });

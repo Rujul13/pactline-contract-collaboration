@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { currentGroqModel } from "@/lib/ai-assistant";
 import { sha256Hex } from "@/lib/security";
 import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
@@ -8,8 +8,9 @@ type ApplyBody = { baseVersion?: number; operation?: "insert_clause" | "replace_
 type BlockRow = { id: string; block_key: string; order_index: number; kind: string; current_text: string };
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   const { contractId } = await context.params;
   let body: ApplyBody;
   try { body = await request.json() as ApplyBody; } catch { return Response.json({ error: "Valid JSON is required" }, { status: 400 }); }

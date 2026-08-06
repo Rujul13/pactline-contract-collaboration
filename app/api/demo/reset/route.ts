@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { DEMO_CONTRACT_ID, ensureDemoWorkspace } from "@/lib/demo";
 
-export async function POST() {
-  const user = await getChatGPTUser(); if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+export async function POST(request: Request) {
+  const auth = await requireOwnerApi(request); if (auth.response) return auth.response;
+  const user = auth.user;
   const owner = await env.DB.prepare("SELECT c.id FROM contracts c JOIN users u ON u.id=c.initiator_id WHERE c.id=? AND u.external_identity_id=?").bind(DEMO_CONTRACT_ID, user.userId).first();
   if (owner) {
     const objects = await env.DB.prepare("SELECT object_key FROM document_objects WHERE contract_id=?").bind(DEMO_CONTRACT_ID).all<{ object_key: string }>();
@@ -13,4 +14,3 @@ export async function POST() {
   await ensureDemoWorkspace(user);
   return Response.json({ reset: true, contractId: DEMO_CONTRACT_ID });
 }
-

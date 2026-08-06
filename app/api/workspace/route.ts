@@ -1,10 +1,11 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { ensureDemoWorkspace } from "@/lib/demo";
 
-export async function GET() {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required", signIn: "/owner/login?return_to=%2F" }, { status: 401 });
+export async function GET(request: Request) {
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   try {
     await ensureDemoWorkspace(user);
   } catch (error) {

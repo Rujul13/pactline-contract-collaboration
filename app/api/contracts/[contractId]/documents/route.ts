@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "../../../../chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { parseDocxBytes, sha256BufferHex } from "@/lib/docx-server";
 import { sha256Hex } from "@/lib/security";
 import { DEMO_CONTRACT_ID } from "@/lib/demo";
@@ -9,8 +9,9 @@ const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 const MAX_DOCX_BYTES = 15 * 1024 * 1024;
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   const { contractId } = await context.params;
   if (contractId === DEMO_CONTRACT_ID) return Response.json({ error: "The public sample cannot accept private uploads. Create a new contract instead." }, { status: 403 });
   const authorized = await env.DB.prepare("SELECT c.id FROM contracts c JOIN users u ON u.id = c.initiator_id WHERE c.id = ? AND u.external_identity_id = ? AND c.status NOT IN ('agreed', 'locked')").bind(contractId, user.userId).first();

@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { sha256Hex } from "@/lib/security";
 import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string; blockId: string }> }) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   const { contractId, blockId } = await context.params;
   const body = await request.json().catch(() => null) as { text?: string; baseVersion?: number } | null;
   const text = body?.text?.trim();

@@ -1,10 +1,11 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { hashPassword, temporaryPassword } from "@/lib/security";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   const { contractId } = await context.params;
   const owner = await env.DB.prepare("SELECT c.id FROM contracts c JOIN users u ON u.id = c.initiator_id WHERE c.id = ? AND u.external_identity_id = ?").bind(contractId, user.userId).first();
   if (!owner) return Response.json({ error: "Contract not found" }, { status: 404 });

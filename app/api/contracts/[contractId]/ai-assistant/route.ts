@@ -1,12 +1,13 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { requireOwnerApi } from "@/lib/owner-boundary";
 import { AiProviderError, askContractAssistant, currentGroqModel, type AiHistoryMessage, type AiMode } from "@/lib/ai-assistant";
 
 const MODES: AiMode[] = ["chat", "draft_clause", "rewrite", "check"];
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
+  const auth = await requireOwnerApi(request);
+  if (auth.response) return auth.response;
+  const user = auth.user;
   if (Number(request.headers.get("content-length") ?? 0) > 80_000) return Response.json({ error: "AI request is too large" }, { status: 413 });
   const { contractId } = await context.params;
   let body: { mode?: AiMode; message?: string; targetBlockId?: string | null; history?: AiHistoryMessage[]; acknowledgedExternalProcessing?: boolean };
