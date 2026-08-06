@@ -142,7 +142,7 @@ jobs:
       - name: Configure the Groq API secret
         if: ${{ env.GROQ_API_KEY != '' }}
         shell: bash
-        run: printf '%s' "$GROQ_API_KEY" | npx wrangler secret put GROQ_API_KEY --config dist/server/wrangler.json
+        run: printf '%s' "$GROQ_API_KEY" | npx wrangler secret put GROQ_API_KEY --name "$CLOUDFLARE_WORKER_NAME" --config dist/server/wrangler.json
 
       - name: Verify live owner authentication
         env:
@@ -152,6 +152,9 @@ jobs:
           BASE_URL="https://$CLOUDFLARE_WORKER_NAME.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev"
           LOGIN_BODY=$(node --input-type=module -e 'process.stdout.write(JSON.stringify({ password: process.env.OWNER_PASSWORD, returnTo: "/" }));')
           curl --fail-with-body --silent --show-error \
+            --retry 10 \
+            --retry-delay 2 \
+            --retry-all-errors \
             --cookie-jar "$RUNNER_TEMP/owner-cookies.txt" \
             --header "Content-Type: application/json" \
             --data "$LOGIN_BODY" \

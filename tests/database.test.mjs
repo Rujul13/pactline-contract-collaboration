@@ -66,6 +66,7 @@ test("deployment workflow isolates staging from production", async () => {
   assert.match(workflow, /pactline-documents-staging/);
   assert.match(workflow, /pactline-contract-collaboration-staging/);
   assert.match(workflow, /ON CONFLICT\(key\) DO NOTHING/);
+  assert.match(workflow, /secret put GROQ_API_KEY --name "\$CLOUDFLARE_WORKER_NAME"/);
   assert.match(workflow, /reviewer-cookies\.txt/);
   assert.match(workflow, /paragraph-proposals\/\$PROPOSAL_ID\/resolve/);
   assert.match(workflow, /result\.versionNumber !== 2/);
