@@ -151,14 +151,22 @@ jobs:
         run: |
           BASE_URL="https://$CLOUDFLARE_WORKER_NAME.$CLOUDFLARE_WORKERS_SUBDOMAIN.workers.dev"
           LOGIN_BODY=$(node --input-type=module -e 'process.stdout.write(JSON.stringify({ password: process.env.OWNER_PASSWORD, returnTo: "/" }));')
-          curl --fail-with-body --silent --show-error \
-            --retry 10 \
-            --retry-delay 2 \
-            --retry-all-errors \
-            --cookie-jar "$RUNNER_TEMP/owner-cookies.txt" \
-            --header "Content-Type: application/json" \
-            --data "$LOGIN_BODY" \
-            "$BASE_URL/api/owner/login"
+          LOGIN_OK=false
+          for ATTEMPT in {1..10}; do
+            if curl --fail --silent --show-error \
+              --cookie-jar "$RUNNER_TEMP/owner-cookies.txt" \
+              --header "Content-Type: application/json" \
+              --data "$LOGIN_BODY" \
+              "$BASE_URL/api/owner/login" >/dev/null; then
+              LOGIN_OK=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$LOGIN_OK" != "true" ]; then
+            echo "The staging Worker did not become ready for owner login" >&2
+            exit 1
+          fi
           curl --fail-with-body --silent --show-error \
             --cookie "$RUNNER_TEMP/owner-cookies.txt" \
             "$BASE_URL/api/workspace" \
