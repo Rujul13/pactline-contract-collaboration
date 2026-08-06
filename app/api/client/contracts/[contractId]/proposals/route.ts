@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { getClientSession } from "@/lib/client-auth";
+import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
 
 type ProposedEdit = { blockId?: string; originalText?: string; proposedText?: string; rationale?: string };
 
@@ -45,6 +46,16 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     env.DB.prepare("INSERT INTO paragraph_proposals (id, contract_id, block_id, base_version, proposed_by_account_id, original_text, proposed_text, rationale, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)").bind(edit.id, contractId, edit.blockId, body.baseVersion, session.accountId, edit.original, edit.proposed, edit.rationale, now, now),
   ]);
   statements.push(env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposals.submitted', 'contract', ?, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, requestId, JSON.stringify({ proposalIds: prepared.map((edit) => edit.id), count: prepared.length, baseVersion: body.baseVersion }), now));
-  await env.DB.batch(statements);
+  const blockConditions = prepared.map(() => "EXISTS (SELECT 1 FROM document_blocks WHERE id=? AND contract_id=? AND current_text=?)").join(" AND ");
+  const guard = mutationGuard(
+    `EXISTS (SELECT 1 FROM contracts WHERE id=? AND current_version=? AND status NOT IN ('agreed','locked')) AND ${blockConditions}`,
+    [contractId, body.baseVersion, ...prepared.flatMap((edit) => [edit.blockId, contractId, edit.original])],
+  );
+  try {
+    await guardedBatch(guard, statements);
+  } catch (error) {
+    if (error instanceof MutationConflictError) return Response.json({ error: "The document changed during your review. Refresh before submitting." }, { status: 409 });
+    throw error;
+  }
   return Response.json({ proposals: prepared.map((edit) => ({ id: edit.id, blockId: edit.blockId, status: "pending" })) }, { status: 201 });
 }

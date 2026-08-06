@@ -2,6 +2,7 @@ import { strFromU8, unzipSync } from "fflate";
 import type { DocumentBlock } from "./docx";
 
 const MAX_DOCX_BYTES = 15 * 1024 * 1024;
+const MAX_EXPANDED_DOCX_BYTES = 40 * 1024 * 1024;
 
 export async function sha256BufferHex(bytes: ArrayBuffer) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -27,6 +28,8 @@ export function parseDocxBytes(bytes: ArrayBuffer): Omit<DocumentBlock, "id">[] 
   } catch {
     throw new Error("The uploaded file is not a valid DOCX package");
   }
+  const expandedBytes = Object.values(archive).reduce((total, entry) => total + entry.byteLength, 0);
+  if (expandedBytes > MAX_EXPANDED_DOCX_BYTES) throw new Error("The expanded Word document is too large to process safely");
   if (archive["word/vbaProject.bin"]) throw new Error("Macro-enabled Word documents are not accepted");
   if (!archive["[Content_Types].xml"] || !archive["word/document.xml"]) {
     throw new Error("The uploaded file is not a valid Word document");

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { sha256Hex } from "@/lib/security";
+import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string; blockId: string }> }) {
   const user = await getChatGPTUser();
@@ -16,12 +17,20 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   const nextVersion = row.current_version + 1; const now = new Date().toISOString(); const afterHash = await sha256Hex(text);
   const blocks = await env.DB.prepare("SELECT id, block_key, order_index, kind, current_text FROM document_blocks WHERE contract_id=? ORDER BY order_index").bind(contractId).all<Record<string, unknown>>();
   const snapshot = blocks.results.map((block) => ({ ...block, current_text: block.id === blockId ? text : block.current_text }));
-  const results = await env.DB.batch([
+  const guard = mutationGuard(
+    "EXISTS (SELECT 1 FROM contracts c JOIN document_blocks b ON b.contract_id=c.id WHERE c.id=? AND c.current_version=? AND c.status NOT IN ('agreed','locked') AND b.id=? AND b.current_text=?)",
+    [contractId, row.current_version, blockId, row.current_text],
+  );
+  try {
+    await guardedBatch(guard, [
     env.DB.prepare("UPDATE document_blocks SET current_text=?, content_hash=?, updated_at=? WHERE id=? AND current_text=?").bind(text, afterHash, now, blockId, row.current_text),
     env.DB.prepare("INSERT INTO contract_versions (id, contract_id, version_number, created_by, snapshot, created_at) VALUES (?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, nextVersion, row.initiator_id, JSON.stringify(snapshot), now),
     env.DB.prepare("UPDATE contracts SET current_version=?, status='negotiating', updated_at=? WHERE id=? AND current_version=?").bind(nextVersion, now, contractId, row.current_version),
     env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, before_hash, after_hash, request_id, metadata, created_at) VALUES (?, ?, ?, 'Contract Owner', 'paragraph.updated', 'document_block', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, blockId, nextVersion, await sha256Hex(row.current_text), afterHash, crypto.randomUUID(), JSON.stringify({ previousVersion: row.current_version }), now),
-  ]);
-  if ((results[0].meta.changes ?? 0) !== 1 || (results[2].meta.changes ?? 0) !== 1) return Response.json({ error: "The update conflicted with another change" }, { status: 409 });
+    ]);
+  } catch (error) {
+    if (error instanceof MutationConflictError) return Response.json({ error: "The update conflicted with another change" }, { status: 409 });
+    throw error;
+  }
   return Response.json({ versionNumber: nextVersion, text });
 }

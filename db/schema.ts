@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const timestamps = {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -65,46 +65,17 @@ export const approvalRequests = sqliteTable("approval_requests", {
   ...timestamps,
 }, (table) => [index("idx_approval_requests_approver_status").on(table.approverId, table.status), index("idx_approval_requests_contract").on(table.contractId)]);
 
-export const clauses = sqliteTable("clauses", {
-  id: text("id").primaryKey(),
-  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
-  clauseKey: text("clause_key").notNull(),
-  orderIndex: integer("order_index").notNull(),
-  title: text("title").notNull(),
-  currentText: text("current_text").notNull(),
-  clauseType: text("clause_type").notNull(),
-  wordContentControlId: text("word_content_control_id"),
-  ...timestamps,
-}, (table) => [uniqueIndex("idx_clauses_contract_key").on(table.contractId, table.clauseKey), uniqueIndex("idx_clauses_contract_order").on(table.contractId, table.orderIndex)]);
-
 export const contractVersions = sqliteTable("contract_versions", {
   id: text("id").primaryKey(),
   contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
   versionNumber: integer("version_number").notNull(),
   createdBy: text("created_by").notNull(),
-  snapshot: text("snapshot", { mode: "json" }).notNull().$type<Array<{ id: string; clauseKey: string; orderIndex: number; title: string; text: string; clauseType: string }>>(),
+  snapshot: text("snapshot", { mode: "json" }).notNull().$type<Array<{ id: string; block_key: string; order_index: number; kind: "title" | "heading" | "body"; current_text: string }>>(),
   parentVersionId: text("parent_version_id"),
   documentObjectKey: text("document_object_key"),
   documentSha256: text("document_sha256"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [uniqueIndex("idx_contract_versions_number").on(table.contractId, table.versionNumber), index("idx_contract_versions_created").on(table.contractId, table.createdAt)]);
-
-export const proposedChanges = sqliteTable("proposed_changes", {
-  id: text("id").primaryKey(),
-  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
-  clauseId: text("clause_id").notNull().references(() => clauses.id),
-  versionNumber: integer("version_number").notNull(),
-  proposedBy: text("proposed_by").notNull(),
-  originalText: text("original_text").notNull(),
-  proposedText: text("proposed_text").notNull(),
-  rationale: text("rationale").notNull(),
-  requestText: text("request_text"),
-  parentChangeId: text("parent_change_id"),
-  status: text("status", { enum: ["draft", "pending", "accepted", "rejected", "countered", "withdrawn"] }).notNull().default("draft"),
-  resolvedAt: text("resolved_at"),
-  resolvedBy: text("resolved_by"),
-  ...timestamps,
-}, (table) => [index("idx_proposed_changes_queue").on(table.contractId, table.status, table.createdAt), index("idx_proposed_changes_clause").on(table.clauseId, table.createdAt)]);
 
 export const agreements = sqliteTable("agreements", {
   id: text("id").primaryKey(),
@@ -147,20 +118,6 @@ export const auditLogEntries = sqliteTable("audit_log_entries", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [index("idx_audit_log_contract_created").on(table.contractId, table.createdAt), index("idx_audit_log_actor_created").on(table.actorId, table.createdAt)]);
 
-export const integrationOutbox = sqliteTable("integration_outbox", {
-  id: text("id").primaryKey(),
-  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
-  destination: text("destination", { enum: ["crm", "notifications"] }).notNull(),
-  eventType: text("event_type").notNull(),
-  payload: text("payload", { mode: "json" }).notNull().$type<Record<string, unknown>>(),
-  status: text("status", { enum: ["pending", "processing", "delivered", "failed"] }).notNull().default("pending"),
-  attempts: integer("attempts").notNull().default(0),
-  availableAt: text("available_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  deliveredAt: text("delivered_at"),
-  lastError: text("last_error"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-}, (table) => [index("idx_integration_outbox_delivery").on(table.status, table.availableAt), index("idx_integration_outbox_contract").on(table.contractId, table.createdAt)]);
-
 export const documentBlocks = sqliteTable("document_blocks", {
   id: text("id").primaryKey(),
   contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
@@ -181,11 +138,24 @@ export const paragraphProposals = sqliteTable("paragraph_proposals", {
   originalText: text("original_text").notNull(),
   proposedText: text("proposed_text").notNull(),
   rationale: text("rationale"),
-  status: text("status", { enum: ["pending", "accepted", "rejected", "withdrawn"] }).notNull().default("pending"),
+  counterText: text("counter_text"),
+  status: text("status", { enum: ["pending", "accepted", "rejected", "countered", "superseded", "withdrawn"] }).notNull().default("pending"),
   resolvedAt: text("resolved_at"),
   resolvedBy: text("resolved_by"),
   ...timestamps,
 }, (table) => [index("idx_paragraph_proposals_queue").on(table.contractId, table.status, table.createdAt), index("idx_paragraph_proposals_block").on(table.blockId, table.createdAt)]);
+
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const mutationGuards = sqliteTable("mutation_guards", {
+  id: text("id").primaryKey(),
+  satisfied: integer("satisfied").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [check("mutation_guards_satisfied", sql`${table.satisfied} = 1`)]);
 
 export const accessSessions = sqliteTable("access_sessions", {
   id: text("id").primaryKey(),

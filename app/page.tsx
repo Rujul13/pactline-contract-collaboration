@@ -15,6 +15,8 @@ type Credentials = { username: string; password: string; link: string };
 type AiMode = "chat" | "draft_clause" | "rewrite" | "check";
 type AiFinding = { severity: "attention" | "information"; title: string; explanation: string; blockId: string | null; recommendation: string };
 type AiResult = {
+  inScope: boolean;
+  refusalReason: string | null;
   reply: string;
   operation: "none" | "insert_clause" | "replace_block";
   heading: string | null;
@@ -53,6 +55,7 @@ function readableAction(action: string) {
     "contract.locked": "locked the final agreed contract",
     "document.downloaded": "downloaded the contract",
     "ai.assistant_invoked": "used the AI contract assistant",
+    "ai.assistant_attempted": "requested an AI contract review",
     "ai.paragraph_rewritten": "applied an AI-assisted paragraph rewrite",
     "ai.clause_inserted": "applied an AI-drafted clause",
   };
@@ -240,7 +243,7 @@ export default function Home() {
     }
     const completed = { ...result, baseVersion: contract.current_version } as AiResult;
     setAiMessages((messages) => ({ ...messages, [contract.id]: [...(messages[contract.id] ?? []), { id: crypto.randomUUID(), role: "assistant", content: completed.reply, result: completed }] }));
-    if (completed.operation !== "none") setAiDraft({ operation: completed.operation, heading: completed.heading ?? "", paragraphs: completed.paragraphs ?? [], targetBlockId: completed.targetBlockId ?? aiTargetBlockId, replacementText: completed.replacementText ?? "", baseVersion: completed.baseVersion });
+    if (completed.inScope && completed.operation !== "none") setAiDraft({ operation: completed.operation, heading: completed.heading ?? "", paragraphs: completed.paragraphs ?? [], targetBlockId: completed.targetBlockId ?? aiTargetBlockId, replacementText: completed.replacementText ?? "", baseVersion: completed.baseVersion });
   }
 
   async function applyAiDraft() {

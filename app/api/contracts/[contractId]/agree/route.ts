@@ -1,6 +1,6 @@
 import { getChatGPTUser } from "../../../../chatgpt-auth";
 import { recordInitiatorAgreement } from "../../../../../lib/agreements";
-import { DomainError } from "../../../../../lib/contracts";
+import { DomainError } from "../../../../../lib/domain-error";
 import { ensureFinalDocument } from "../../../../../lib/contract-download";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {

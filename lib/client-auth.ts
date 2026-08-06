@@ -29,6 +29,7 @@ export async function loginClient(username: string, password: string, request: R
   const ipHash = request.headers.get("cf-connecting-ip") ? await sha256Hex(request.headers.get("cf-connecting-ip")!) : null;
   const userAgentHash = request.headers.get("user-agent") ? await sha256Hex(request.headers.get("user-agent")!) : null;
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM access_sessions WHERE expires_at <= ? OR (revoked_at IS NOT NULL AND revoked_at <= datetime(?, '-7 days'))").bind(now.toISOString(), now.toISOString()),
     env.DB.prepare("INSERT INTO access_sessions (id, access_account_id, token_hash, expires_at, ip_hash, user_agent_hash, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(sessionId, account.id, tokenHash, expiresAt, ipHash, userAgentHash, now.toISOString(), now.toISOString()),
     env.DB.prepare("UPDATE access_accounts SET status = 'active', failed_attempts = 0, last_signed_in_at = ?, updated_at = ? WHERE id = ?").bind(now.toISOString(), now.toISOString(), account.id),
   ]);
@@ -38,10 +39,12 @@ export async function loginClient(username: string, password: string, request: R
 export async function getClientSession(request: Request): Promise<ClientSession | null> {
   const token = cookieValue(request); if (!token) return null;
   const tokenHash = await sha256Hex(token);
-  const row = await env.DB.prepare(`SELECT s.id AS session_id, a.id AS account_id, a.contract_id, a.party_id, a.username, a.permission, a.status, a.expires_at AS account_expires_at, s.expires_at AS session_expires_at, p.name, p.company, p.email FROM access_sessions s JOIN access_accounts a ON a.id = s.access_account_id JOIN parties p ON p.id = a.party_id WHERE s.token_hash = ? AND s.revoked_at IS NULL`).bind(tokenHash).first<Record<string, string>>();
+  const row = await env.DB.prepare(`SELECT s.id AS session_id, s.last_seen_at, a.id AS account_id, a.contract_id, a.party_id, a.username, a.permission, a.status, a.expires_at AS account_expires_at, s.expires_at AS session_expires_at, p.name, p.company, p.email FROM access_sessions s JOIN access_accounts a ON a.id = s.access_account_id JOIN parties p ON p.id = a.party_id WHERE s.token_hash = ? AND s.revoked_at IS NULL`).bind(tokenHash).first<Record<string, string>>();
   const now = new Date();
   if (!row || row.status !== "active" || new Date(row.account_expires_at) <= now || new Date(row.session_expires_at) <= now) return null;
-  await env.DB.prepare("UPDATE access_sessions SET last_seen_at = ? WHERE id = ?").bind(now.toISOString(), row.session_id).run();
+  if (now.getTime() - new Date(row.last_seen_at).getTime() >= 5 * 60 * 1000) {
+    await env.DB.prepare("UPDATE access_sessions SET last_seen_at = ? WHERE id = ?").bind(now.toISOString(), row.session_id).run();
+  }
   return { sessionId: row.session_id, accountId: row.account_id, contractId: row.contract_id, partyId: row.party_id, username: row.username, permission: row.permission, name: row.name, company: row.company, email: row.email };
 }
 

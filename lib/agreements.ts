@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import { DomainError } from "./contracts";
+import { DomainError } from "./domain-error";
+import { guardedBatch, MutationConflictError, mutationGuard } from "./mutations";
 
 type Actor = { id: string; display: string; requestId: string; ipAddress?: string; userAgent?: string };
 type ContractAgreementRow = { id: string; current_version: number; status: string; crm_record_id: string | null; initiator_external_id: string; initiator_party_id: string };
@@ -36,15 +37,23 @@ export async function recordInitiatorAgreement(contractId: string, actor: Actor)
   if ((agreementCount?.total ?? 0) < 2) return { agreed: true, locked: false, versionNumber: contract.current_version };
 
   const lockAuditId = crypto.randomUUID();
-  const crmOutboxId = crypto.randomUUID();
-  const notificationOutboxId = crypto.randomUUID();
-  const results = await db.batch([
+  const lockGuard = mutationGuard(
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    [contractId, contract.current_version],
+  );
+  try {
+    await guardedBatch(lockGuard, [
     db.prepare("UPDATE contracts SET status = 'locked', locked_at = ?, updated_at = ? WHERE id = ? AND current_version = ? AND status != 'locked'").bind(now, now, contractId, contract.current_version),
     db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.locked', 'contract', ?, ?, ?, ?, ?, json(?), ?)").bind(lockAuditId, contractId, actor.id, actor.display, contractId, contract.current_version, actor.requestId, actor.ipAddress ?? null, actor.userAgent ?? null, JSON.stringify({ bothPartiesAgreed: true }), now),
-    db.prepare("INSERT INTO integration_outbox (id, contract_id, destination, event_type, payload, created_at) VALUES (?, ?, 'crm', 'contract_locked', json(?), ?)").bind(crmOutboxId, contractId, JSON.stringify({ crmRecordId: contract.crm_record_id, status: "locked", versionNumber: contract.current_version }), now),
-    db.prepare("INSERT INTO integration_outbox (id, contract_id, destination, event_type, payload, created_at) VALUES (?, ?, 'notifications', 'contract_locked', json(?), ?)").bind(notificationOutboxId, contractId, JSON.stringify({ status: "locked", versionNumber: contract.current_version }), now),
-  ]);
-  if ((results[0].meta.changes ?? 0) !== 1) throw new DomainError("The contract lock conflicted with another request", 409);
+    ]);
+  } catch (error) {
+    if (error instanceof MutationConflictError) {
+      const latest = await db.prepare("SELECT status FROM contracts WHERE id=?").bind(contractId).first<{ status: string }>();
+      if (latest?.status === "locked") return { agreed: true, locked: true, versionNumber: contract.current_version };
+      throw new DomainError("The contract lock conflicted with another request", 409);
+    }
+    throw error;
+  }
   return { agreed: true, locked: true, versionNumber: contract.current_version };
 }
 
@@ -68,10 +77,22 @@ export async function recordCounterpartyAgreement(contractId: string, session: {
   const agreementCount = await db.prepare("SELECT COUNT(DISTINCT party_id) AS total FROM agreements WHERE contract_id=? AND version_number=?").bind(contractId, contract.current_version).first<{ total: number }>();
   if ((agreementCount?.total ?? 0) < 2) return { agreed: true, locked: false, versionNumber: contract.current_version };
   const now = new Date().toISOString();
-  const result = await db.batch([
+  const lockGuard = mutationGuard(
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    [contractId, contract.current_version],
+  );
+  try {
+    await guardedBatch(lockGuard, [
     db.prepare("UPDATE contracts SET status='locked', locked_at=?, updated_at=? WHERE id=? AND current_version=? AND status!='locked'").bind(now, now, contractId, contract.current_version),
     db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.locked', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, contractId, contract.current_version, requestId, JSON.stringify({ bothPartiesAgreed: true }), now),
-  ]);
-  if ((result[0].meta.changes ?? 0) !== 1) throw new DomainError("The contract lock conflicted with another request", 409);
+    ]);
+  } catch (error) {
+    if (error instanceof MutationConflictError) {
+      const latest = await db.prepare("SELECT status FROM contracts WHERE id=?").bind(contractId).first<{ status: string }>();
+      if (latest?.status === "locked") return { agreed: true, locked: true, versionNumber: contract.current_version };
+      throw new DomainError("The contract lock conflicted with another request", 409);
+    }
+    throw error;
+  }
   return { agreed: true, locked: true, versionNumber: contract.current_version };
 }

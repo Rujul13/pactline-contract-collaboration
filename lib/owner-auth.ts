@@ -3,6 +3,8 @@ import { sha256Hex, verifyPassword } from "./security";
 
 const COOKIE_NAME = "__Host-pactline_owner";
 const SESSION_HOURS = 12;
+const OWNER_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const OWNER_LOGIN_MAX_FAILURES = 5;
 
 type OwnerEnvironment = {
   OWNER_EMAIL?: string;
@@ -107,6 +109,43 @@ export async function verifyOwnerPassword(password: string) {
     difference |= password.charCodeAt(index) ^ storedPassword.charCodeAt(index);
   }
   return difference === 0;
+}
+
+async function ownerLoginKey(request: Request) {
+  const address = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const agent = request.headers.get("user-agent") ?? "unknown";
+  return `owner_login:${await sha256Hex(`${address}\n${agent}`)}`;
+}
+
+type OwnerLoginState = { failures: number; windowStartedAt: number; lockedUntil: number | null };
+
+export async function ownerLoginAllowed(request: Request) {
+  const key = await ownerLoginKey(request);
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key=?").bind(key).first<{ value: string }>();
+  if (!row) return { allowed: true, key };
+  try {
+    const state = JSON.parse(row.value) as OwnerLoginState;
+    return { allowed: !state.lockedUntil || state.lockedUntil <= Date.now(), key };
+  } catch {
+    return { allowed: true, key };
+  }
+}
+
+export async function recordOwnerLoginResult(key: string, successful: boolean) {
+  if (successful) {
+    await env.DB.prepare("DELETE FROM app_settings WHERE key=?").bind(key).run();
+    return;
+  }
+  const now = Date.now();
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key=?").bind(key).first<{ value: string }>();
+  let state: OwnerLoginState = { failures: 0, windowStartedAt: now, lockedUntil: null };
+  if (row) {
+    try { state = JSON.parse(row.value) as OwnerLoginState; } catch { /* replace malformed state */ }
+  }
+  if (now - state.windowStartedAt >= OWNER_LOGIN_WINDOW_MS) state = { failures: 0, windowStartedAt: now, lockedUntil: null };
+  state.failures += 1;
+  if (state.failures >= OWNER_LOGIN_MAX_FAILURES) state.lockedUntil = now + OWNER_LOGIN_WINDOW_MS;
+  await env.DB.prepare("INSERT INTO app_settings (key,value,updated_at) VALUES (?,json(?),CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP").bind(key, JSON.stringify(state)).run();
 }
 
 export async function createOwnerSessionCookie() {

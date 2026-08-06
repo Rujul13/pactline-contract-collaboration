@@ -3,6 +3,7 @@ import { getChatGPTUser } from "../../../../chatgpt-auth";
 import { parseDocxBytes, sha256BufferHex } from "@/lib/docx-server";
 import { sha256Hex } from "@/lib/security";
 import { DEMO_CONTRACT_ID } from "@/lib/demo";
+import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
 
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const MAX_DOCX_BYTES = 15 * 1024 * 1024;
@@ -37,7 +38,11 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   try {
     const rows = await Promise.all(parsed.map(async (block, index) => ({ id: crypto.randomUUID(), blockKey: `paragraph-${index + 1}`, orderIndex: index, ...block, hash: await sha256Hex(block.text) })));
     const snapshot = rows.map((block) => ({ id: block.id, block_key: block.blockKey, order_index: block.orderIndex, kind: block.kind, current_text: block.text }));
-    await env.DB.batch([
+    const guard = mutationGuard(
+      "EXISTS (SELECT 1 FROM contracts WHERE id=? AND current_version=? AND status NOT IN ('agreed','locked'))",
+      [contractId, contract.current_version],
+    );
+    await guardedBatch(guard, [
       env.DB.prepare("INSERT INTO document_objects (id, contract_id, object_key, filename, content_type, byte_size, sha256, scan_status, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)").bind(documentId, contractId, objectKey, safeName, DOCX_TYPE, file.size, sha256, user.userId, now),
       env.DB.prepare("DELETE FROM document_blocks WHERE contract_id=?").bind(contractId),
       ...rows.map((block) => env.DB.prepare("INSERT INTO document_blocks (id, contract_id, block_key, order_index, kind, current_text, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(block.id, contractId, block.blockKey, block.orderIndex, block.kind, block.text, block.hash, now, now)),
@@ -48,6 +53,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     ]);
   } catch (error) {
     await env.DOCUMENTS.delete(objectKey);
+    if (error instanceof MutationConflictError) return Response.json({ error: "The document changed while the upload was processed. Please try again." }, { status: 409 });
     throw error;
   }
   return Response.json({ document: { id: documentId, filename: safeName, byteSize: file.size, sha256, scanStatus: "pending" }, versionNumber: nextVersion }, { status: 201 });

@@ -1,7 +1,7 @@
 import { getClientSession } from "@/lib/client-auth";
 import { recordCounterpartyAgreement } from "@/lib/agreements";
 import { ensureFinalDocument } from "@/lib/contract-download";
-import { DomainError } from "@/lib/contracts";
+import { DomainError } from "@/lib/domain-error";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
   const session = await getClientSession(request); if (!session) return Response.json({ error: "Authentication required" }, { status: 401 });

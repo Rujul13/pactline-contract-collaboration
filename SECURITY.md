@@ -15,7 +15,7 @@ Only the latest `main` branch is supported during pre-release development.
 - Production dependencies must pass `npm audit --omit=dev --audit-level=high`.
 - Authentication, authorization, upload quarantine, version-conflict, audit, and backup/restore tests are release gates.
 - Secrets belong only in the hosting environment and must never use a browser-exposed prefix.
-- Uploaded documents remain quarantined until an external malware scanner marks them clean.
+- Uploaded documents are marked `pending`, but external malware scanning and enforced quarantine are not connected yet. Only synthetic or trusted documents may be used until that release gate is implemented.
 
 ## Current development-tool exception
 

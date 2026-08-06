@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { currentGroqModel } from "@/lib/ai-assistant";
 import { sha256Hex } from "@/lib/security";
+import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
 
 type ApplyBody = { baseVersion?: number; operation?: "insert_clause" | "replace_block"; targetBlockId?: string | null; afterBlockId?: string | null; heading?: string | null; paragraphs?: string[]; replacementText?: string | null };
 type BlockRow = { id: string; block_key: string; order_index: number; kind: string; current_text: string };
@@ -28,13 +29,21 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     if (!replacement || replacement.length < 10 || replacement.length > 50_000 || replacement === target.current_text) return Response.json({ error: "The replacement must contain changed paragraph text" }, { status: 400 });
     const afterHash = await sha256Hex(replacement); const beforeHash = await sha256Hex(target.current_text);
     const snapshot = blocks.results.map((block) => ({ ...block, current_text: block.id === target.id ? replacement : block.current_text }));
-    const results = await env.DB.batch([
+    const guard = mutationGuard(
+      "EXISTS (SELECT 1 FROM contracts c JOIN document_blocks b ON b.contract_id=c.id WHERE c.id=? AND c.current_version=? AND c.status NOT IN ('agreed','locked') AND b.id=? AND b.current_text=? AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending'))",
+      [contractId, contract.current_version, target.id, target.current_text],
+    );
+    try {
+      await guardedBatch(guard, [
       env.DB.prepare("UPDATE document_blocks SET current_text=?, content_hash=?, updated_at=? WHERE id=? AND current_text=?").bind(replacement, afterHash, now, target.id, target.current_text),
       env.DB.prepare("INSERT INTO contract_versions (id, contract_id, version_number, created_by, snapshot, created_at) VALUES (?, ?, ?, ?, json(?), ?)").bind(versionId, contractId, nextVersion, contract.initiator_id, JSON.stringify(snapshot), now),
       env.DB.prepare("UPDATE contracts SET current_version=?, status='negotiating', updated_at=? WHERE id=? AND current_version=?").bind(nextVersion, now, contractId, contract.current_version),
       env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, before_hash, after_hash, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'ai.paragraph_rewritten', 'document_block', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, target.id, nextVersion, beforeHash, afterHash, requestId, JSON.stringify({ previousVersion: contract.current_version, model: currentGroqModel() }), now),
-    ]);
-    if ((results[0].meta.changes ?? 0) !== 1 || (results[2].meta.changes ?? 0) !== 1) return Response.json({ error: "The AI edit conflicted with another change" }, { status: 409 });
+      ]);
+    } catch (error) {
+      if (error instanceof MutationConflictError) return Response.json({ error: "The AI edit conflicted with another change" }, { status: 409 });
+      throw error;
+    }
     return Response.json({ versionNumber: nextVersion, operation: body.operation, updatedBlockId: target.id });
   }
 
@@ -57,7 +66,15 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     env.DB.prepare("UPDATE contracts SET current_version=?, status='negotiating', updated_at=? WHERE id=? AND current_version=?").bind(nextVersion, now, contractId, contract.current_version),
     env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'ai.clause_inserted', 'document_block', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, additions[0].id, nextVersion, requestId, JSON.stringify({ previousVersion: contract.current_version, model: currentGroqModel(), insertedBlockIds: additions.map((block) => block.id), afterBlockId: afterBlock?.id ?? null }), now),
   );
-  const results = await env.DB.batch(statements); const contractUpdate = results[results.length - 2];
-  if ((contractUpdate.meta.changes ?? 0) !== 1) return Response.json({ error: "The clause insertion conflicted with another change" }, { status: 409 });
+  const guard = mutationGuard(
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status NOT IN ('agreed','locked') AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending'))",
+    [contractId, contract.current_version],
+  );
+  try {
+    await guardedBatch(guard, statements);
+  } catch (error) {
+    if (error instanceof MutationConflictError) return Response.json({ error: "The clause insertion conflicted with another change" }, { status: 409 });
+    throw error;
+  }
   return Response.json({ versionNumber: nextVersion, operation: body.operation, insertedBlockIds: additions.map((block) => block.id) });
 }

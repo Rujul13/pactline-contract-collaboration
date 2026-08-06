@@ -1,57 +1,39 @@
 # Pactline
 
-Pactline is a secure Word-document collaboration application for companies exchanging and negotiating contracts. It preserves stable paragraph identities across DOCX versions, attributes every external action to a named account, and locks only when both parties agree to the same version.
+Pactline is a serverless Word-contract negotiation application. An owner uploads or starts from a DOCX, shares a named reviewer account, receives paragraph-level proposals, accepts/rejects/counters them, and locks a final downloadable Word version only after both parties agree to the same version.
 
-## Implemented foundation
+## Architecture
 
-- Responsive contract review workspace with natural paragraph editing, client review, history, audit, proposal, detail, and sharing surfaces.
-- Server-side external reviewer authentication using PBKDF2-SHA256 password hashes, opaque secure cookies, expiry, lockout, and revocable sessions.
-- Owner-controlled temporary access creation; generated passwords are returned exactly once and are never stored in plaintext.
-- Durable paragraph blocks and paragraph proposals with optimistic version checks, stale-edit prevention, and attributed audit records.
-- Correct proposal acceptance in the interface: accepted language replaces the clause and creates the next version.
-- Transactional server workflow for accept, reject, and counter decisions with stale-version and lock checks.
-- Relational D1 model for internal users, contracts, parties, named access accounts, approvals, stable clauses, immutable versions, proposals, agreements, document objects, audit events, and reliable integration delivery.
-- R2 binding and authenticated DOCX upload endpoint with size/type checks, SHA-256 integrity metadata, pending malware-scan state, and cleanup on metadata failure.
-- Genuine `.docx` generation plus safe client-side inspection before an imported file can be mapped.
-- Initiator agreement endpoint; a contract locks only after both party records agree to the same version.
-- Outbox events for CRM and direct-notification delivery after locking.
-- Narrow AI, CRM, notification, and ONLYOFFICE adapter boundaries.
-- Generated migrations and product-specific automated checks.
+- React owner workspace and external reviewer portal.
+- Next-style routes compiled by Vinext/Vite to Cloudflare Workers.
+- Cloudflare D1 for contracts, paragraphs, proposals, versions, accounts, sessions, agreements, and audit events.
+- Cloudflare R2 for original and generated DOCX bytes.
+- Groq `openai/gpt-oss-120b` assistant with strict structured output, deterministic out-of-scope refusal, and owner-confirmed application.
+- GitHub Actions with isolated staging and production resources, migrations, tests, deployment, and live smoke checks.
 
-## External activation required
+The active document model is `document_blocks` plus `paragraph_proposals`. Every accepted owner, reviewer, upload, or AI edit creates a full version snapshot. Optimistic database guards abort stale multi-statement mutations before related writes commit.
 
-The following capabilities intentionally fail closed until their provider configuration is supplied:
+## Security boundaries
 
-- Production email delivery for temporary reviewer credentials and account recovery.
-- ONLYOFFICE Document Server URL and JWT secret for live embedded editing.
-- AI provider base URL and API key.
-- CRM provider endpoint and API key.
-- Slack or Teams notification endpoint and API key.
-- Malware scanning worker for newly uploaded DOCX objects.
-- Sites hosting must be enabled for the workspace before D1/R2 provisioning and deployment.
+- Reviewer passwords use salted PBKDF2-SHA256 hashes.
+- Reviewer sessions use revocable opaque tokens stored only as hashes.
+- Cookies are HttpOnly, Secure, and SameSite=Strict.
+- Reviewer actions are restricted to the contract and permission attached to the server-side session.
+- AI has no execution tools and can only return `none`, `insert_clause`, or `replace_block`; the owner must confirm any mutation.
+- DOCX uploads reject invalid and macro-enabled packages and enforce compressed and expanded size limits.
 
-Copy `.env.example` to a local ignored environment file and populate values there. Never add provider keys to browser code or use `NEXT_PUBLIC_` prefixes.
+Uploaded documents currently remain marked `pending` because no malware-scanning provider is connected. Use only synthetic or trusted documents until quarantine enforcement is added. The paragraph pipeline does not preserve complex tables, images, comments, headers, footnotes, tracked changes, or full Word formatting.
 
-## Data and document rules
-
-- `document_blocks.block_key` is unique within a contract and persists across versions.
-- Uploaded documents do not replace authoritative state until parsing, mapping, and malware review complete.
-- Proposal decisions are server-authorized and version-scoped.
-- Every accepted change creates an immutable full-clause snapshot.
-- Audit entries are append-only; corrections create new events.
-- Agreement is bound to one `version_number`; any later accepted change requires fresh agreement.
-- Integration delivery uses the outbox table so CRM or messaging outages do not roll back a legal-state transition.
-
-## Commands
+## Local commands
 
 ```bash
 npm install
 npm run dev
-npm run db:generate
 npm run lint
 npm test
+npm run db:generate
 ```
 
-`npm test` includes the production build and verifies product, credential-safety, and migration invariants.
+`npm test` builds the production Worker and runs database migration, concurrency-guard, DOCX, authentication, AI-scope, and architecture tests.
 
-See [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) for implemented controls, remaining release gates, and the staging checklist.
+See [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), and [SECURITY.md](SECURITY.md) before using real contracts.

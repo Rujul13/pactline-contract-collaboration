@@ -21,12 +21,15 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   if (body.targetBlockId && !blocks.results.some((block) => block.id === body.targetBlockId)) return Response.json({ error: "Selected paragraph not found" }, { status: 404 });
   if (body.mode === "rewrite" && !body.targetBlockId) return Response.json({ error: "Select a paragraph before asking for a rewrite" }, { status: 400 });
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const usage = await env.DB.prepare("SELECT COUNT(*) AS total FROM audit_log_entries WHERE actor_id=? AND action='ai.assistant_invoked' AND created_at>=?").bind(user.userId, hourAgo).first<{ total: number }>();
+  const usage = await env.DB.prepare("SELECT COUNT(*) AS total FROM audit_log_entries WHERE actor_id=? AND action='ai.assistant_attempted' AND created_at>=?").bind(user.userId, hourAgo).first<{ total: number }>();
   if ((usage?.total ?? 0) >= 20) return Response.json({ error: "AI generation limit reached. Try again later." }, { status: 429 });
+  const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+  const attemptedAt = new Date().toISOString();
+  await env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'ai.assistant_attempted', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, contractId, contract.current_version, requestId, JSON.stringify({ mode: body.mode, model: currentGroqModel(), targetBlockId: body.targetBlockId ?? null }), attemptedAt).run();
   try {
     const result = await askContractAssistant({ mode: body.mode, message, history, title: contract.title, version: contract.current_version, blocks: blocks.results, targetBlockId: body.targetBlockId });
     const now = new Date().toISOString();
-    await env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'ai.assistant_invoked', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, contractId, contract.current_version, request.headers.get("x-request-id") ?? crypto.randomUUID(), JSON.stringify({ mode: body.mode, model: currentGroqModel(), targetBlockId: body.targetBlockId ?? null, operation: result.operation }), now).run();
+    await env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'ai.assistant_invoked', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, contractId, contract.current_version, requestId, JSON.stringify({ mode: body.mode, model: currentGroqModel(), targetBlockId: body.targetBlockId ?? null, operation: result.operation, inScope: result.inScope }), now).run();
     return Response.json({ ...result, model: currentGroqModel(), contractStatus: contract.status }, { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     if (error instanceof AiProviderError) return Response.json({ error: error.message }, { status: error.status });
