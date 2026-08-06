@@ -90,3 +90,32 @@ test("retains the security controls for reviewer sessions", async () => {
   assert.match(clientAuth, /failed_attempts < 8/);
   assert.match(accessRoute, /temporaryPassword/);
 });
+
+test("provides an owner-only, human-confirmed Groq contract assistant", async () => {
+  const [page, assistant, applyRoute, provider, workflow, clientPage] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/contracts/[contractId]/ai-assistant/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/contracts/[contractId]/ai-suggestions/apply/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/ai-assistant.ts", import.meta.url), "utf8"),
+    readFile(new URL("../.github/workflows/deploy-cloudflare.yml", import.meta.url), "utf8"),
+    readFile(new URL("../app/review/[contractId]/page.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /Contract assistant/);
+  assert.match(page, /I understand and continue/);
+  assert.match(page, /Apply as new version/);
+  assert.match(page, /Nothing is applied automatically/);
+  assert.match(assistant, /getChatGPTUser/);
+  assert.match(assistant, /acknowledgedExternalProcessing/);
+  assert.match(assistant, /20/);
+  assert.match(assistant, /ai\.assistant_invoked/);
+  assert.match(provider, /api\.groq\.com/);
+  assert.match(provider, /json_schema/);
+  assert.match(provider, /strict: true/);
+  assert.match(provider, /openai\/gpt-oss-120b/);
+  assert.match(applyRoute, /Resolve pending client proposals/);
+  assert.match(applyRoute, /contract_versions/);
+  assert.match(applyRoute, /ai\.paragraph_rewritten/);
+  assert.match(applyRoute, /ai\.clause_inserted/);
+  assert.match(workflow, /wrangler secret put GROQ_API_KEY/);
+  assert.doesNotMatch(clientPage, /Contract assistant|ai-assistant|Ask AI/);
+});

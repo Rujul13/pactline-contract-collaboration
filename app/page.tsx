@@ -12,6 +12,23 @@ type Activity = { id: string; actor_display: string; action: string; target_type
 type Access = { id: string; username: string; permission: string; status: string; expires_at: string; last_signed_in_at?: string; name: string; email: string };
 type Workspace = { contract: ContractSummary; blocks: Block[]; proposals: Proposal[]; parties: Party[]; documents: Array<{ id: string; filename: string; byte_size: number; sha256: string; scan_status: string; created_at: string }>; versions: Version[]; agreements: Agreement[]; activity: Activity[]; access: Access[] };
 type Credentials = { username: string; password: string; link: string };
+type AiMode = "chat" | "draft_clause" | "rewrite" | "check";
+type AiFinding = { severity: "attention" | "information"; title: string; explanation: string; blockId: string | null; recommendation: string };
+type AiResult = {
+  reply: string;
+  operation: "none" | "insert_clause" | "replace_block";
+  heading: string | null;
+  paragraphs: string[];
+  targetBlockId: string | null;
+  replacementText: string | null;
+  explanation: string | null;
+  assumptions: string[];
+  findings: AiFinding[];
+  model: string;
+  baseVersion: number;
+};
+type AiChatMessage = { id: string; role: "user" | "assistant"; content: string; result?: AiResult };
+type AiDraft = { operation: "insert_clause" | "replace_block"; heading: string; paragraphs: string[]; targetBlockId: string | null; replacementText: string; baseVersion: number };
 
 const DEMO_CONTRACT_ID = "sample-services-agreement";
 const DEMO_USERNAME = "client.reviewer";
@@ -35,6 +52,9 @@ function readableAction(action: string) {
     "contract.agreed": "agreed to the current version",
     "contract.locked": "locked the final agreed contract",
     "document.downloaded": "downloaded the contract",
+    "ai.assistant_invoked": "used the AI contract assistant",
+    "ai.paragraph_rewritten": "applied an AI-assisted paragraph rewrite",
+    "ai.clause_inserted": "applied an AI-drafted clause",
   };
   return labels[action] ?? action.replaceAll(".", " ");
 }
@@ -63,7 +83,16 @@ export default function Home() {
   const [shareOpen, setShareOpen] = useState(false);
   const [credentials, setCredentials] = useState<Credentials | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiAcknowledged, setAiAcknowledged] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMode, setAiMode] = useState<AiMode>("chat");
+  const [aiInput, setAiInput] = useState("");
+  const [aiTargetBlockId, setAiTargetBlockId] = useState<string | null>(null);
+  const [aiMessages, setAiMessages] = useState<Record<string, AiChatMessage[]>>({});
+  const [aiDraft, setAiDraft] = useState<AiDraft | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const aiMessagesEndRef = useRef<HTMLDivElement>(null);
 
   const announce = useCallback((message: string) => {
     setToast(message); window.setTimeout(() => setToast(""), 3000);
@@ -101,6 +130,10 @@ export default function Home() {
     return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); window.clearInterval(timer); };
   }, [activeId, loadWorkspace]);
 
+  useEffect(() => {
+    if (aiOpen) aiMessagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [aiMessages, aiOpen, aiBusy]);
+
   const contract = workspace?.contract;
   const clientParty = workspace?.parties.find((party) => party.role === "counterparty");
   const ownerParty = workspace?.parties.find((party) => party.role === "initiator");
@@ -110,6 +143,9 @@ export default function Home() {
   const ownerAgreed = Boolean(contract && workspace?.agreements.some((agreement) => agreement.role === "initiator" && agreement.version_number === contract.current_version));
   const clientAgreed = Boolean(contract && workspace?.agreements.some((agreement) => agreement.role === "counterparty" && agreement.version_number === contract.current_version));
   const locked = contract?.status === "locked";
+  const currentAiMessages = contract ? aiMessages[contract.id] ?? [] : [];
+  const aiTargetBlock = workspace?.blocks.find((block) => block.id === aiDraft?.targetBlockId) ?? null;
+  const aiApplyBlockedReason = locked ? "The final contract is locked." : pending.length ? "Resolve pending client proposals before applying an AI draft." : "";
 
   async function saveParagraph(block: Block) {
     if (!contract) return; setBusy(true);
@@ -184,6 +220,44 @@ export default function Home() {
     announce(result.locked ? "Both parties agreed. The final document is locked." : "Your agreement is recorded for this version."); await loadWorkspace(contract.id);
   }
 
+  function openAi(mode: AiMode = "chat", blockId: string | null = null) {
+    setAiMode(mode); setAiTargetBlockId(blockId); setAiDraft(null); setAiOpen(true);
+    if (mode === "rewrite" && blockId) setAiInput("Rewrite this paragraph to be clear, balanced, and contract-ready while preserving its commercial intent.");
+    else setAiInput("");
+  }
+
+  async function sendAiMessage() {
+    if (!contract || !aiInput.trim() || !aiAcknowledged || aiBusy) return;
+    const message = aiInput.trim(); const messageId = crypto.randomUUID(); const currentMessages = aiMessages[contract.id] ?? [];
+    setAiMessages((messages) => ({ ...messages, [contract.id]: [...(messages[contract.id] ?? []), { id: messageId, role: "user", content: message }] }));
+    setAiInput(""); setAiBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/ai-assistant`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: aiMode, message, targetBlockId: aiTargetBlockId, history: currentMessages.slice(-12).map(({ role, content }) => ({ role, content })), acknowledgedExternalProcessing: true }) });
+    const result = await response.json() as Partial<AiResult> & { error?: string };
+    setAiBusy(false);
+    if (!response.ok || !result.reply || !result.operation) {
+      setAiMessages((messages) => ({ ...messages, [contract.id]: [...(messages[contract.id] ?? []), { id: crypto.randomUUID(), role: "assistant", content: result.error ?? "The assistant is temporarily unavailable." }] }));
+      return;
+    }
+    const completed = { ...result, baseVersion: contract.current_version } as AiResult;
+    setAiMessages((messages) => ({ ...messages, [contract.id]: [...(messages[contract.id] ?? []), { id: crypto.randomUUID(), role: "assistant", content: completed.reply, result: completed }] }));
+    if (completed.operation !== "none") setAiDraft({ operation: completed.operation, heading: completed.heading ?? "", paragraphs: completed.paragraphs ?? [], targetBlockId: completed.targetBlockId ?? aiTargetBlockId, replacementText: completed.replacementText ?? "", baseVersion: completed.baseVersion });
+  }
+
+  async function applyAiDraft() {
+    if (!contract || !aiDraft || aiBusy) return;
+    setAiBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/ai-suggestions/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ baseVersion: aiDraft.baseVersion, operation: aiDraft.operation, targetBlockId: aiDraft.targetBlockId, afterBlockId: aiDraft.targetBlockId, heading: aiDraft.heading, paragraphs: aiDraft.paragraphs, replacementText: aiDraft.replacementText }) });
+    const result = await response.json() as { versionNumber?: number; error?: string };
+    setAiBusy(false);
+    if (!response.ok) { announce(result.error ?? "Unable to apply the AI draft"); return; }
+    setAiDraft(null); announce(`AI draft applied as version ${result.versionNumber}.`); await loadWorkspace(contract.id);
+  }
+
+  function focusAiFinding(finding: AiFinding) {
+    if (!finding.blockId) return;
+    setTab("document"); window.setTimeout(() => document.getElementById(`paragraph-${finding.blockId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+  }
+
   async function resetDemo() {
     if (!contract || contract.id !== DEMO_CONTRACT_ID || !window.confirm("Reset the generic demo contract and remove its demonstration edits?")) return;
     setBusy(true); const response = await fetch("/api/demo/reset", { method: "POST" }); const result = await response.json() as { error?: string };
@@ -217,6 +291,30 @@ export default function Home() {
     </section>
 
     {shareOpen && credentials && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareOpen(false); }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><button className="modal-close" aria-label="Close sharing dialog" onClick={() => setShareOpen(false)}>×</button><div className="modal-kicker">🔒 Named, password-protected review</div><h2 id="share-title">Share with Client Reviewer</h2><p className="modal-lead">The reviewer can propose paragraph edits and agree to the final version. They cannot overwrite the owner document.</p><div className="access-identity"><span className="client-avatar">CR</span><div><strong>{clientParty?.name}</strong><small>{clientParty?.email} · {clientParty?.company}</small></div><span className="access-role">Reviewer</span></div><div className="credential-grid"><label><span>Secure contract link</span><div><code>{credentials.link}</code><button onClick={() => void copy(credentials.link, "Link")}>Copy</button></div></label><label><span>Username</span><div><code>{credentials.username}</code><button onClick={() => void copy(credentials.username, "Username")}>Copy</button></div></label><label><span>Temporary password</span><div><code>{passwordVisible ? credentials.password : "••••••••••••••••"}</code><button onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label></div><div className="modal-actions"><a className="preview-login" href={credentials.link} target="_blank">Open client login</a><button className="copy-package" onClick={() => void copy(`Contract: ${credentials.link}\nUsername: ${credentials.username}\nPassword: ${credentials.password}`, "Access package")}>Copy access package</button></div></section></div>}
+    <button className={`ai-launcher ${aiOpen ? "open" : ""}`} aria-label="Open AI contract assistant" aria-expanded={aiOpen} onClick={() => aiOpen ? setAiOpen(false) : openAi()}><span>✦</span>{aiOpen ? "Close assistant" : "Ask AI"}</button>
+    {aiOpen && <aside className="ai-drawer" role="dialog" aria-modal="false" aria-labelledby="ai-title">
+      <header className="ai-drawer-header"><div><span className="ai-spark">✦</span><div><h2 id="ai-title">Contract assistant</h2><p>Owner workspace · Groq-powered</p></div></div><button aria-label="Close AI assistant" onClick={() => setAiOpen(false)}>×</button></header>
+      {!aiAcknowledged ? <section className="ai-disclosure"><span className="ai-disclosure-icon">↗</span><h3>Before you begin</h3><p>Your current contract text and messages will be sent to Groq to generate a response. Pactline does not save this chat or the prompt in its audit log.</p><p className="ai-legal-note">AI output may be inaccurate and is not legal advice. You review every draft before it changes the document.</p><button onClick={() => setAiAcknowledged(true)}>I understand and continue</button></section> : <>
+        <div className="ai-quick-actions" aria-label="AI actions">
+          <button className={aiMode === "chat" ? "active" : ""} onClick={() => { setAiMode("chat"); setAiTargetBlockId(null); }}>Discuss</button>
+          <button className={aiMode === "draft_clause" ? "active" : ""} onClick={() => { setAiMode("draft_clause"); setAiTargetBlockId(null); setAiInput("Draft a clause that "); }}>Draft clause</button>
+          <button className={aiMode === "rewrite" ? "active" : ""} onClick={() => setAiMode("rewrite")}>Rewrite</button>
+          <button className={aiMode === "check" ? "active" : ""} onClick={() => { setAiMode("check"); setAiTargetBlockId(null); setAiInput("Check this contract for ambiguity, missing terms, and commercial risk."); }}>Check document</button>
+        </div>
+        {aiMode === "rewrite" && <label className="ai-target-select">Paragraph to rewrite<select value={aiTargetBlockId ?? ""} onChange={(event) => setAiTargetBlockId(event.target.value || null)}><option value="">Choose a paragraph</option>{workspace?.blocks.filter((block) => block.kind !== "title").map((block) => <option value={block.id} key={block.id}>{paragraphNumber.get(block.id)}. {block.current_text.slice(0, 64)}</option>)}</select></label>}
+        <div className="ai-conversation">
+          {!currentAiMessages.length && <div className="ai-empty"><span>✦</span><h3>Work through contract language</h3><p>Ask a question, draft a new clause, rewrite a paragraph, or run a document check. Nothing is applied automatically.</p></div>}
+          {currentAiMessages.map((message) => <article className={`ai-message ${message.role}`} key={message.id}><small>{message.role === "user" ? "You" : "Assistant"}</small><p>{message.content}</p>{message.result?.findings?.length ? <div className="ai-findings">{message.result.findings.map((finding, index) => <button key={`${message.id}-${index}`} onClick={() => focusAiFinding(finding)} disabled={!finding.blockId}><span className={`severity ${finding.severity}`}>{finding.severity}</span><strong>{finding.title}</strong><p>{finding.explanation} {finding.recommendation}</p>{finding.blockId && <em>View paragraph →</em>}</button>)}</div> : null}</article>)}
+          {aiBusy && <div className="ai-thinking"><i/><i/><i/><span>Reviewing the contract</span></div>}
+          <div ref={aiMessagesEndRef}/>
+        </div>
+        {aiDraft && <section className="ai-draft-card"><div className="ai-draft-heading"><div><span>Editable preview</span><strong>{aiDraft.operation === "replace_block" ? "Paragraph rewrite" : "New clause"}</strong></div><button aria-label="Discard AI draft" onClick={() => setAiDraft(null)}>×</button></div>
+          {aiDraft.operation === "replace_block" ? <div className="ai-rewrite-preview"><label>Current version<p>{aiTargetBlock?.current_text ?? "Selected paragraph"}</p></label><label>Proposed version<textarea value={aiDraft.replacementText} onChange={(event) => setAiDraft({ ...aiDraft, replacementText: event.target.value })} rows={Math.max(5, Math.ceil(aiDraft.replacementText.length / 55))}/></label></div> : <div className="ai-clause-preview"><label>Clause heading<input value={aiDraft.heading} onChange={(event) => setAiDraft({ ...aiDraft, heading: event.target.value })}/></label>{aiDraft.paragraphs.map((paragraph, index) => <label key={index}>Paragraph {index + 1}<textarea value={paragraph} onChange={(event) => setAiDraft({ ...aiDraft, paragraphs: aiDraft.paragraphs.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} rows={Math.max(4, Math.ceil(paragraph.length / 55))}/></label>)}<label>Insert after<select value={aiDraft.targetBlockId ?? ""} onChange={(event) => setAiDraft({ ...aiDraft, targetBlockId: event.target.value || null })}><option value="">End of document</option>{workspace?.blocks.map((block) => <option value={block.id} key={block.id}>{paragraphNumber.get(block.id)}. {block.current_text.slice(0, 58)}</option>)}</select></label></div>}
+          {aiApplyBlockedReason && <p className="ai-apply-warning">{aiApplyBlockedReason}</p>}<button className="ai-apply" disabled={aiBusy || Boolean(aiApplyBlockedReason) || (aiDraft.operation === "replace_block" ? aiDraft.replacementText.trim().length < 10 : !aiDraft.heading.trim() || !aiDraft.paragraphs.some((paragraph) => paragraph.trim().length >= 10))} onClick={() => void applyAiDraft()}>Apply as new version</button><small>Creates an immutable version and audit entry. The prompt and chat remain session-only.</small>
+        </section>}
+        <form className="ai-composer" onSubmit={(event) => { event.preventDefault(); void sendAiMessage(); }}><textarea value={aiInput} maxLength={4000} onChange={(event) => setAiInput(event.target.value)} placeholder={aiMode === "draft_clause" ? "Describe the clause you need…" : aiMode === "rewrite" ? "How should this paragraph change?" : aiMode === "check" ? "What should the review focus on?" : "Ask about this contract…"} rows={3}/><div><span>{aiInput.length}/4000 · not legal advice</span><button disabled={aiBusy || !aiInput.trim() || (aiMode === "rewrite" && !aiTargetBlockId)} aria-label="Send message">↑</button></div></form>
+      </>}
+    </aside>}
     <div className="toast-region" aria-live="polite">{toast && <div className="toast"><span>✓</span>{toast}</div>}</div>
   </main>;
 }

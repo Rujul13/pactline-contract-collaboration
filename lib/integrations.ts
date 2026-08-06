@@ -1,29 +1,8 @@
-export type ClauseInput = { clauseKey: string; title: string; text: string };
-
 function required(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is not configured`);
   return value;
 }
-
-async function providerJson(path: string, payload: unknown) {
-  const response = await fetch(`${required("AI_API_BASE_URL")}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${required("AI_API_KEY")}` },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(`AI provider failed with status ${response.status}`);
-  return response.json() as Promise<unknown>;
-}
-
-export const aiAdapter = {
-  draftFill(clauses: ClauseInput[], brief: string) {
-    return providerJson("/draft-fill", { clauses, brief, constraints: { knownClauseKeysOnly: true, humanConfirmationRequired: true } });
-  },
-  parseChange(clause: ClauseInput, request: string) {
-    return providerJson("/change-parse", { clause, request, constraints: { oneClauseOnly: true, structuredOutput: true, humanConfirmationRequired: true } });
-  },
-};
 
 export const crmAdapter = {
   async searchCounterparty(query: string) {

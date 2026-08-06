@@ -17,6 +17,7 @@ env:
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
   CLOUDFLARE_D1_DATABASE_NAME: pactline-contracts
   CLOUDFLARE_R2_BUCKET_NAME: pactline-documents
+  GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
 
 jobs:
   deploy:
@@ -125,6 +126,11 @@ jobs:
       - name: Publish application
         run: npx wrangler deploy --config dist/server/wrangler.json
 
+      - name: Configure the Groq API secret
+        if: ${{ env.GROQ_API_KEY != '' }}
+        shell: bash
+        run: printf '%s' "$GROQ_API_KEY" | npx wrangler secret put GROQ_API_KEY --config dist/server/wrangler.json
+
       - name: Verify live owner authentication
         env:
           OWNER_PASSWORD: ${{ secrets.OWNER_PASSWORD }}
@@ -148,3 +154,19 @@ jobs:
               throw new Error("Authenticated workspace did not seed the demo contract");
             }
           ' "$RUNNER_TEMP/workspace.json"
+          if [ -n "$GROQ_API_KEY" ]; then
+            AI_BODY='{"mode":"chat","message":"In one short sentence, identify the purpose of this contract.","history":[],"acknowledgedExternalProcessing":true}'
+            curl --fail-with-body --silent --show-error \
+              --cookie "$RUNNER_TEMP/owner-cookies.txt" \
+              --header "Content-Type: application/json" \
+              --data "$AI_BODY" \
+              "$BASE_URL/api/contracts/sample-services-agreement/ai-assistant" \
+              --output "$RUNNER_TEMP/ai-check.json"
+            node --input-type=module -e '
+              import fs from "node:fs";
+              const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (!result.reply || result.operation !== "none") throw new Error("Live AI assistant verification failed");
+            ' "$RUNNER_TEMP/ai-check.json"
+          else
+            echo "GROQ_API_KEY is not configured; deployed AI will remain unavailable until the repository secret is added."
+          fi
