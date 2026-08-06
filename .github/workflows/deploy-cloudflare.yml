@@ -157,6 +157,9 @@ jobs:
           if [ -n "$GROQ_API_KEY" ]; then
             AI_BODY='{"mode":"chat","message":"In one short sentence, identify the purpose of this contract.","history":[],"acknowledgedExternalProcessing":true}'
             curl --fail-with-body --silent --show-error \
+              --retry 5 \
+              --retry-delay 2 \
+              --retry-all-errors \
               --cookie "$RUNNER_TEMP/owner-cookies.txt" \
               --header "Content-Type: application/json" \
               --data "$AI_BODY" \
