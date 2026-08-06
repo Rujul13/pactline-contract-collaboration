@@ -92,13 +92,14 @@ test("retains the security controls for reviewer sessions", async () => {
 });
 
 test("provides an owner-only, human-confirmed Groq contract assistant", async () => {
-  const [page, assistant, applyRoute, provider, workflow, clientPage] = await Promise.all([
+  const [page, assistant, applyRoute, provider, workflow, clientPage, assetHeaders] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/contracts/[contractId]/ai-assistant/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/contracts/[contractId]/ai-suggestions/apply/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/ai-assistant.ts", import.meta.url), "utf8"),
     readFile(new URL("../.github/workflows/deploy-cloudflare.yml", import.meta.url), "utf8"),
     readFile(new URL("../app/review/[contractId]/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../public/_headers", import.meta.url), "utf8"),
   ]);
   assert.match(page, /Contract assistant/);
   assert.match(page, /I understand and continue/);
@@ -117,5 +118,6 @@ test("provides an owner-only, human-confirmed Groq contract assistant", async ()
   assert.match(applyRoute, /ai\.paragraph_rewritten/);
   assert.match(applyRoute, /ai\.clause_inserted/);
   assert.match(workflow, /wrangler secret put GROQ_API_KEY/);
+  assert.match(assetHeaders, /max-age=0, must-revalidate/);
   assert.doesNotMatch(clientPage, /Contract assistant|ai-assistant|Ask AI/);
 });
