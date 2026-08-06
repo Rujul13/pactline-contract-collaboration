@@ -187,3 +187,17 @@ html { scroll-behavior:smooth; }
 .ai-apply-warning { margin:8px 0 0; border-radius:6px; padding:7px; background:#fff3d8; color:#775613; font-size:8px; line-height:1.4; }.ai-apply { width:100%; min-height:39px; margin-top:10px; border:0; border-radius:7px; background:#111214; color:#fff; font-size:9px; font-weight:850; cursor:pointer; }.ai-apply:disabled { opacity:.42; cursor:not-allowed; }.ai-draft-card>small { display:block; margin-top:6px; color:#818285; font-size:7px; line-height:1.4; }
 .ai-composer { position:absolute; right:0; bottom:0; left:0; padding:10px 12px; border-top:1px solid #dcdcd7; background:#fff; }.ai-composer textarea { width:100%; border:1px solid #cececa; border-radius:8px; padding:9px 10px; color:#292a2d; font:10px/1.45 ui-sans-serif,system-ui; resize:none; }.ai-composer>div { display:flex; align-items:center; justify-content:space-between; margin-top:5px; }.ai-composer span { color:#858689; font-size:7px; }.ai-composer button { width:31px; height:31px; border:0; border-radius:50%; background:#111214; color:#fff; font-size:15px; font-weight:800; cursor:pointer; }.ai-composer button:disabled { opacity:.35; cursor:not-allowed; }
 @media (max-width:700px) { .ai-drawer { width:100%; }.ai-launcher.open { display:none; }.ai-launcher { right:14px; bottom:14px; }.ai-quick-actions { position:sticky; top:0; z-index:2; } }
+
+/* Focused proposal changes and final-version owner action */
+.tabs .owner-lock-button { min-height:32px; margin:0 0 9px auto; border:1px solid #c9cbc7; border-radius:7px; padding:0 10px; background:#fff; color:#343538; font-size:9px; font-weight:800; }
+.tabs .owner-lock-button.ready { border-color:#111214; background:#111214; color:#fff; }
+.tabs .owner-lock-button:disabled { cursor:not-allowed; opacity:.58; }
+.tabs .version-select { margin-left:0; }
+.proposal-card .removed,.proposal-card .removed p { text-decoration:none; }
+.diff>div>span { font-weight:800; font-size:10px; }
+.diff p>span { font-weight:inherit; font-size:inherit; }
+.diff-change { border-radius:3px; padding:1px 2px; color:inherit; font-weight:750; }
+.removed-change { background:#ffc9c0; text-decoration:line-through; text-decoration-thickness:1.5px; text-decoration-color:#a13e30; }
+.added-change { background:#bcebcf; box-shadow:0 0 0 1px #91d2ad inset; }
+.inline-diff .diff-change { padding:2px 3px; }
+@media (max-width:560px) { .tabs .owner-lock-button { min-height:34px; }.tabs .version-select { display:none; } }

@@ -61,6 +61,8 @@ test("supports durable paragraph proposals and immutable owner decisions", async
   assert.doesNotMatch(resolutionRoute, /p\.base_version=c\.current_version/);
   assert.match(resolutionRoute, /status='superseded'/);
   assert.match(resolutionRoute, /SET base_version=\?/);
+  assert.match(page, /DiffText/);
+  assert.match(page, /Only changed words are highlighted below/);
 });
 
 test("rejects reviewer sessions at the owner API boundary", async () => {
@@ -77,12 +79,13 @@ test("rejects reviewer sessions at the owner API boundary", async () => {
 });
 
 test("locks only the version agreed by both parties and supports final downloads", async () => {
-  const [agreements, ownerAgree, clientAgree, ownerDownload, clientDownload] = await Promise.all([
+  const [agreements, ownerAgree, clientAgree, ownerDownload, clientDownload, page] = await Promise.all([
     readFile(new URL("../lib/agreements.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/contracts/[contractId]/agree/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/client/contracts/[contractId]/agree/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/contracts/[contractId]/download/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/client/contracts/[contractId]/download/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(agreements, /COUNT\(DISTINCT party_id\)/);
   assert.match(agreements, /status='locked'/);
@@ -90,6 +93,9 @@ test("locks only the version agreed by both parties and supports final downloads
   assert.match(clientAgree, /recordCounterpartyAgreement/);
   assert.match(ownerDownload, /document\.downloaded/);
   assert.match(clientDownload, /final document is available after both parties agree/i);
+  assert.match(ownerAgree, /recordInitiatorAgreement/);
+  assert.match(page, /owner-lock-button/);
+  assert.match(page, /Lock version/);
 });
 
 test("retains the security controls for reviewer sessions", async () => {
