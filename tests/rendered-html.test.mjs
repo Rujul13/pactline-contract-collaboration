@@ -70,7 +70,7 @@ test("rejects reviewer sessions at the owner API boundary", async () => {
     readFile(new URL("../app/api/contracts/[contractId]/ai-suggestions/apply/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/contracts/[contractId]/download/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(boundary, /getClientSession\(request\)/);
+  assert.match(boundary, /hasClientSessionCookie\(request\)/);
   assert.match(boundary, /Owner permission required/);
   assert.match(boundary, /status: 403/);
   for (const route of [resolution, aiApply, ownerDownload]) assert.match(route, /requireOwnerApi\(request\)/);

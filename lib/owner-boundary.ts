@@ -1,5 +1,5 @@
 import { getChatGPTUser, type ChatGPTUser } from "@/app/chatgpt-auth";
-import { getClientSession } from "@/lib/client-auth";
+import { hasClientSessionCookie } from "@/lib/client-auth";
 
 export type OwnerBoundary =
   | { user: ChatGPTUser; response?: never }
@@ -10,8 +10,9 @@ export type OwnerBoundary =
  * calls an owner API directly instead of using the UI.
  */
 export async function requireOwnerApi(request: Request): Promise<OwnerBoundary> {
-  const reviewer = await getClientSession(request);
-  if (reviewer) {
+  // A reviewer credential must never be interpreted as an owner credential.
+  // Deny by cookie namespace before any owner-session fallback or route logic.
+  if (hasClientSessionCookie(request)) {
     return { response: Response.json({ error: "Owner permission required" }, { status: 403 }) };
   }
 

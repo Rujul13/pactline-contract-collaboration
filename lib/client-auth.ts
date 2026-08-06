@@ -13,6 +13,10 @@ function cookieValue(request: Request) {
   return cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1) ?? null;
 }
 
+export function hasClientSessionCookie(request: Request) {
+  return cookieValue(request) !== null;
+}
+
 export async function loginClient(username: string, password: string, request: Request) {
   const normalized = username.trim().toLowerCase();
   const account = await env.DB.prepare(`SELECT a.*, p.name, p.company, p.email FROM access_accounts a JOIN parties p ON p.id = a.party_id WHERE lower(a.username) = ?`).bind(normalized).first<AccountRow>();
