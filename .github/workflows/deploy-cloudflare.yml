@@ -301,6 +301,18 @@ jobs:
             --cookie "$RUNNER_TEMP/owner-cookies.txt" \
             "$BASE_URL/api/demo/reset" >/dev/null
 
+          curl --fail-with-body --silent --show-error \
+            --cookie "$RUNNER_TEMP/portal-cookies.txt" \
+            "$BASE_URL/api/portal/workspace" \
+            --output "$RUNNER_TEMP/portal-workspace-after-reset.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const workspace = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!workspace.contracts?.some((item) => item.id === "sample-services-agreement") || !workspace.contracts?.some((item) => item.status === "locked")) {
+              throw new Error("Demo reset did not restore both current and expired supplier contracts");
+            }
+          ' "$RUNNER_TEMP/portal-workspace-after-reset.json"
+
           if [ -n "$GROQ_API_KEY" ]; then
             AI_BODY='{"mode":"chat","message":"In one short sentence, identify the purpose of this contract.","history":[],"acknowledgedExternalProcessing":true}'
             curl --fail-with-body --silent --show-error \

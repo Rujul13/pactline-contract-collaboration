@@ -130,11 +130,9 @@ export async function ensureV2Workspace(user: ChatGPTUser) {
   const renewalDate = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
   await env.DB.prepare("UPDATE contracts SET expiration_date=COALESCE(expiration_date,?) WHERE id='sample-services-agreement'").bind(renewalDate).run();
   await env.DB.prepare("INSERT INTO compliance_requirements (id,relationship_id,document_category,required,warning_days,created_at,updated_at) VALUES ('demo-insurance-requirement',?,'insurance_certificate',1,30,?,?) ON CONFLICT(relationship_id,document_category) DO NOTHING").bind(DEMO_SUPPLIER_RELATIONSHIP_ID, now, now).run();
-  const grant = await env.DB.prepare("SELECT id FROM contract_access_grants WHERE contract_id='sample-services-agreement' AND portal_account_id=?").bind(DEMO_PORTAL_ACCOUNT_ID).first();
-  if (!grant) await env.DB.prepare("INSERT INTO contract_access_grants (id,contract_id,portal_account_id,legacy_access_account_id,permission,status,created_at,updated_at) VALUES ('demo-primary-grant','sample-services-agreement',?,'sample-client-account','propose_changes','active',?,?)").bind(DEMO_PORTAL_ACCOUNT_ID, now, now).run();
+  await env.DB.prepare("INSERT INTO contract_access_grants (id,contract_id,portal_account_id,legacy_access_account_id,permission,status,expires_at,created_at,updated_at) VALUES ('demo-primary-grant','sample-services-agreement',?,'sample-client-account','propose_changes','active',NULL,?,?) ON CONFLICT(contract_id,portal_account_id) DO UPDATE SET legacy_access_account_id='sample-client-account',permission='propose_changes',status='active',expires_at=NULL,updated_at=excluded.updated_at").bind(DEMO_PORTAL_ACCOUNT_ID, now, now).run();
   await ensureExpiredContract(owner.id, now);
-  const expiredGrant = await env.DB.prepare("SELECT id FROM contract_access_grants WHERE contract_id=? AND portal_account_id=?").bind(DEMO_EXPIRED_CONTRACT_ID, DEMO_PORTAL_ACCOUNT_ID).first();
-  if (!expiredGrant) await env.DB.prepare("INSERT INTO contract_access_grants (id,contract_id,portal_account_id,permission,status,created_at,updated_at) VALUES ('demo-expired-grant',?,?,'view','active',?,?)").bind(DEMO_EXPIRED_CONTRACT_ID, DEMO_PORTAL_ACCOUNT_ID, now, now).run();
+  await env.DB.prepare("INSERT INTO contract_access_grants (id,contract_id,portal_account_id,permission,status,expires_at,created_at,updated_at) VALUES ('demo-expired-grant',?,?,'view','active',NULL,?,?) ON CONFLICT(contract_id,portal_account_id) DO UPDATE SET permission='view',status='active',expires_at=NULL,updated_at=excluded.updated_at").bind(DEMO_EXPIRED_CONTRACT_ID, DEMO_PORTAL_ACCOUNT_ID, now, now).run();
   await ensureVaultDemo(owner.id, now);
   await ensureTemplateDemo(now);
   return { ownerOrganizationId: DEMO_OWNER_ORGANIZATION_ID };
