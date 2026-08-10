@@ -57,6 +57,13 @@
       "when": 1785994013270,
       "tag": "0007_moaning_epoch",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786392146115,
+      "tag": "0008_elite_microchip",
+      "breakpoints": true
     }
   ]
 }

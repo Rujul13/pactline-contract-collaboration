@@ -2,7 +2,7 @@ name: Deploy Pactline to Cloudflare
 
 on:
   push:
-    branches: [main, codex/phase-one-demo]
+    branches: [main, codex/phase-one-demo, codex/version-two-expansion]
   workflow_dispatch:
 
 permissions:
@@ -36,12 +36,16 @@ jobs:
             echo "CLOUDFLARE_D1_DATABASE_NAME=pactline-contracts" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_R2_BUCKET_NAME=pactline-documents" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_WORKER_NAME=pactline-contract-collaboration" >> "$GITHUB_ENV"
+            echo "CLOUDFLARE_VECTORIZE_INDEX_NAME=pactline-knowledge" >> "$GITHUB_ENV"
           else
             echo "PACTLINE_ENVIRONMENT=staging" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_D1_DATABASE_NAME=pactline-contracts-staging" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_R2_BUCKET_NAME=pactline-documents-staging" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_WORKER_NAME=pactline-contract-collaboration-staging" >> "$GITHUB_ENV"
+            echo "CLOUDFLARE_VECTORIZE_INDEX_NAME=pactline-knowledge-staging" >> "$GITHUB_ENV"
           fi
+          echo "PACTLINE_ENABLE_AI_BINDINGS=true" >> "$GITHUB_ENV"
+          echo "PACTLINE_ENABLE_SCHEDULED_ALERTS=true" >> "$GITHUB_ENV"
 
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
@@ -67,6 +71,9 @@ jobs:
 
       - name: Ensure the private R2 document bucket exists
         run: npx wrangler r2 bucket create "$CLOUDFLARE_R2_BUCKET_NAME" >/dev/null 2>&1 || true
+
+      - name: Ensure the semantic-search index exists
+        run: npx wrangler vectorize create "$CLOUDFLARE_VECTORIZE_INDEX_NAME" --dimensions=384 --metric=cosine >/dev/null 2>&1 || true
 
       - name: Build production Worker
         run: npm run build
@@ -118,18 +125,16 @@ jobs:
           fi
           node --input-type=module <<'NODE'
             import fs from "node:fs";
-            import { createHash, pbkdf2Sync, randomBytes } from "node:crypto";
+            import { pbkdf2Sync, randomBytes } from "node:crypto";
             const salt = randomBytes(16);
-            const value = pbkdf2Sync(process.env.OWNER_PASSWORD, salt, 210000, 32, "sha256");
-            const passwordHash = `pbkdf2-sha256$210000$${salt.toString("base64url")}$${value.toString("base64url")}`;
-            const passwordSha256 = createHash("sha256").update(process.env.OWNER_PASSWORD).digest("hex");
+            const value = pbkdf2Sync(process.env.OWNER_PASSWORD, salt, 100000, 32, "sha256");
+            const passwordHash = `pbkdf2-sha256$100000$${salt.toString("base64url")}$${value.toString("base64url")}`;
             const sessionSecret = randomBytes(48).toString("base64url");
             const quote = (input) => input.replaceAll("'", "''");
             fs.writeFileSync(`${process.env.RUNNER_TEMP}/owner-settings.sql`, `
               INSERT INTO app_settings (key, value, updated_at) VALUES ('owner_password_hash', '${quote(passwordHash)}', CURRENT_TIMESTAMP)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
-              INSERT INTO app_settings (key, value, updated_at) VALUES ('owner_password_sha256', '${quote(passwordSha256)}', CURRENT_TIMESTAMP)
-              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+              DELETE FROM app_settings WHERE key = 'owner_password_sha256';
               INSERT INTO app_settings (key, value, updated_at) VALUES ('owner_session_secret', '${quote(sessionSecret)}', CURRENT_TIMESTAMP)
               ON CONFLICT(key) DO NOTHING;
             `);
@@ -178,6 +183,34 @@ jobs:
               throw new Error("Authenticated workspace did not seed the demo contract");
             }
           ' "$RUNNER_TEMP/workspace.json"
+
+          curl --fail-with-body --silent --show-error \
+            --cookie "$RUNNER_TEMP/owner-cookies.txt" \
+            "$BASE_URL/api/v2/workspace" \
+            --output "$RUNNER_TEMP/version-two-workspace.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const workspace = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!workspace.suppliers?.length || !workspace.documents?.some((item) => item.content_type === "application/pdf") || !workspace.templates?.length || !workspace.alerts?.length) {
+              throw new Error("Version two portfolio was not seeded completely");
+            }
+          ' "$RUNNER_TEMP/version-two-workspace.json"
+          curl --fail-with-body --silent --show-error \
+            --cookie-jar "$RUNNER_TEMP/portal-cookies.txt" \
+            --header "Content-Type: application/json" \
+            --data '{"username":"supplier.reviewer","password":"SupplierDemo!2026"}' \
+            "$BASE_URL/api/portal/login" >/dev/null
+          curl --fail-with-body --silent --show-error \
+            --cookie "$RUNNER_TEMP/portal-cookies.txt" \
+            "$BASE_URL/api/portal/workspace" \
+            --output "$RUNNER_TEMP/portal-workspace.json"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const workspace = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!workspace.contracts?.some((item) => item.status === "locked") || !workspace.documents?.length) {
+              throw new Error("Supplier portal did not expose its scoped portfolio");
+            }
+          ' "$RUNNER_TEMP/portal-workspace.json"
 
           # Exercise the complete synthetic reviewer round, then restore the demo.
           curl --fail-with-body --silent --show-error --request POST \

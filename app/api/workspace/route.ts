@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
 import { ensureDemoWorkspace } from "@/lib/demo";
+import { ensureV2Workspace } from "@/lib/v2";
 
 export async function GET(request: Request) {
   const auth = await requireOwnerApi(request);
@@ -8,6 +9,7 @@ export async function GET(request: Request) {
   const user = auth.user;
   try {
     await ensureDemoWorkspace(user);
+    await ensureV2Workspace(user);
   } catch (error) {
     console.error("Unable to prepare the owner workspace", error);
     return Response.json(

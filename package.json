@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/database.test.mjs && node --experimental-strip-types --test tests/security.test.ts tests/docx.test.ts tests/ai-scope.test.ts tests/text-diff.test.ts",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/database.test.mjs tests/version-two.test.mjs && node --experimental-strip-types --test tests/security.test.ts tests/docx.test.ts tests/ai-scope.test.ts tests/text-diff.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "deploy:cloudflare": "npm run build && wrangler deploy --config dist/server/wrangler.json"
@@ -19,7 +19,8 @@
     "fflate": "0.7.4",
     "next": "16.3.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "unpdf": "^1.4.0"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.50.0",

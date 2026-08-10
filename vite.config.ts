@@ -10,6 +10,8 @@ const { d1, r2 } = hostingConfig;
 const d1DatabaseName = process.env.CLOUDFLARE_D1_DATABASE_NAME ?? "site-creator-d1";
 const d1DatabaseId = process.env.CLOUDFLARE_D1_DATABASE_ID ?? SITE_CREATOR_PLACEHOLDER_DATABASE_ID;
 const r2BucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME ?? "site-creator-r2";
+const vectorizeIndexName = process.env.CLOUDFLARE_VECTORIZE_INDEX_NAME;
+const enableAiBindings = process.env.PACTLINE_ENABLE_AI_BINDINGS === "true";
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -35,6 +37,9 @@ const localBindingConfig = {
         },
       ]
     : [],
+  ai: enableAiBindings ? { binding: "AI" } : undefined,
+  vectorize: vectorizeIndexName ? [{ binding: "VECTORIZE", index_name: vectorizeIndexName }] : [],
+  triggers: process.env.PACTLINE_ENABLE_SCHEDULED_ALERTS === "true" ? { crons: ["0 6 * * *"] } : undefined,
 };
 
 export default defineConfig(async () => {
