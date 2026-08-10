@@ -125,6 +125,7 @@ export async function ensureV2Workspace(user: ChatGPTUser) {
       env.DB.prepare("INSERT INTO portal_accounts (id,organization_id,username,password_hash,display_name,email,status,failed_attempts,created_at,updated_at) VALUES (?,?,?,?,?,'supplier@example.test','active',0,?,?)").bind(DEMO_PORTAL_ACCOUNT_ID, DEMO_SUPPLIER_ORGANIZATION_ID, DEMO_PORTAL_USERNAME, passwordHash, "Supplier Reviewer", now, now),
     ]);
   }
+  await env.DB.prepare("INSERT INTO organization_memberships (id,organization_id,user_id,role,status,created_at,updated_at) VALUES (?,?,?,'owner_admin','active',?,?) ON CONFLICT(organization_id,user_id) DO UPDATE SET role='owner_admin',status='active',updated_at=excluded.updated_at").bind(crypto.randomUUID(), DEMO_OWNER_ORGANIZATION_ID, owner.id, now, now).run();
   await env.DB.prepare("UPDATE contracts SET owner_organization_id=?,counterparty_organization_id=? WHERE id='sample-services-agreement' AND owner_organization_id IS NULL").bind(DEMO_OWNER_ORGANIZATION_ID, DEMO_SUPPLIER_ORGANIZATION_ID).run();
   const renewalDate = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
   await env.DB.prepare("UPDATE contracts SET expiration_date=COALESCE(expiration_date,?) WHERE id='sample-services-agreement'").bind(renewalDate).run();
