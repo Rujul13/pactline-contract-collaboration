@@ -36,13 +36,13 @@ jobs:
             echo "CLOUDFLARE_D1_DATABASE_NAME=pactline-contracts" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_R2_BUCKET_NAME=pactline-documents" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_WORKER_NAME=pactline-contract-collaboration" >> "$GITHUB_ENV"
-            echo "CLOUDFLARE_VECTORIZE_INDEX_NAME=pactline-knowledge" >> "$GITHUB_ENV"
+            echo "PACTLINE_VECTORIZE_INDEX_NAME=pactline-knowledge" >> "$GITHUB_ENV"
           else
             echo "PACTLINE_ENVIRONMENT=staging" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_D1_DATABASE_NAME=pactline-contracts-staging" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_R2_BUCKET_NAME=pactline-documents-staging" >> "$GITHUB_ENV"
             echo "CLOUDFLARE_WORKER_NAME=pactline-contract-collaboration-staging" >> "$GITHUB_ENV"
-            echo "CLOUDFLARE_VECTORIZE_INDEX_NAME=pactline-knowledge-staging" >> "$GITHUB_ENV"
+            echo "PACTLINE_VECTORIZE_INDEX_NAME=pactline-knowledge-staging" >> "$GITHUB_ENV"
           fi
           echo "PACTLINE_ENABLE_AI_BINDINGS=true" >> "$GITHUB_ENV"
           echo "PACTLINE_ENABLE_SCHEDULED_ALERTS=true" >> "$GITHUB_ENV"
@@ -73,7 +73,15 @@ jobs:
         run: npx wrangler r2 bucket create "$CLOUDFLARE_R2_BUCKET_NAME" >/dev/null 2>&1 || true
 
       - name: Ensure the semantic-search index exists
-        run: npx wrangler vectorize create "$CLOUDFLARE_VECTORIZE_INDEX_NAME" --dimensions=384 --metric=cosine >/dev/null 2>&1 || true
+        shell: bash
+        run: |
+          if npx wrangler vectorize get "$PACTLINE_VECTORIZE_INDEX_NAME" >/dev/null 2>&1 || \
+             npx wrangler vectorize create "$PACTLINE_VECTORIZE_INDEX_NAME" --dimensions=384 --metric=cosine; then
+            echo "CLOUDFLARE_VECTORIZE_INDEX_NAME=$PACTLINE_VECTORIZE_INDEX_NAME" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Vectorize is unavailable to this API token; deploying the authorized D1 keyword-search fallback."
+            echo "CLOUDFLARE_VECTORIZE_INDEX_NAME=" >> "$GITHUB_ENV"
+          fi
 
       - name: Build production Worker
         run: npm run build
