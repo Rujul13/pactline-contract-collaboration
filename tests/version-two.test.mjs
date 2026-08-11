@@ -15,15 +15,16 @@ test("version two persists organizations, portal access, vault records, extracti
 });
 
 test("customer and supplier surfaces enforce their own authenticated scopes", async () => {
-  const [ownerWorkspace, ownerDocuments, supplierWorkspace, supplierContract, supplierDownload, portalAuth] = await Promise.all([
+  const [ownerWorkspace, ownerDocuments, searchReindex, supplierWorkspace, supplierContract, supplierDownload, portalAuth] = await Promise.all([
     source("app/api/v2/workspace/route.ts"),
     source("app/api/v2/documents/route.ts"),
+    source("app/api/v2/search/reindex/route.ts"),
     source("app/api/portal/workspace/route.ts"),
     source("app/api/portal/contracts/[contractId]/route.ts"),
     source("app/api/portal/documents/[documentId]/download/route.ts"),
     source("lib/portal-auth.ts"),
   ]);
-  for (const route of [ownerWorkspace, ownerDocuments]) assert.match(route, /requireOwnerApi\(request\)/);
+  for (const route of [ownerWorkspace, ownerDocuments, searchReindex]) assert.match(route, /requireOwnerApi\(request\)/);
   for (const route of [supplierWorkspace, supplierContract, supplierDownload]) assert.match(route, /requirePortalSession\(request\)/);
   assert.match(supplierContract, /contract_access_grants/);
   assert.match(supplierDownload, /supplier_organization_id/);
@@ -45,6 +46,7 @@ test("AI extraction remains provisional until a human confirms source-linked res
   assert.match(search, /bge-small-en-v1\.5/);
   assert.match(search, /namespace: organizationId/);
   assert.match(search, /organization_id=\?/);
+  assert.match(search, /reindexPendingSearchChunks/);
 });
 
 test("the demo seeds a reusable template, supplier vault, and lifecycle alerts", async () => {
@@ -59,6 +61,24 @@ test("the demo seeds a reusable template, supplier vault, and lifecycle alerts",
   assert.match(manage, /Human confirmation required/);
   assert.match(portal, /Submit supplier agreement/);
   assert.match(portal, /Current and expired agreements/);
+  assert.match(portal, /changedDrafts/);
+  assert.match(portal, /password: ""/);
+});
+
+test("quality-of-life controls preserve secure sessions and explain empty search", async () => {
+  const [ownerAuth, ownerPage, manage, clientReview] = await Promise.all([
+    source("lib/owner-auth.ts"),
+    source("app/page.tsx"),
+    source("app/manage/page.tsx"),
+    source("app/review/[contractId]/page.tsx"),
+  ]);
+  assert.match(ownerAuth, /SESSION_CLOCK_SKEW_MS/);
+  assert.match(ownerPage, /Close contract switcher/);
+  assert.match(ownerPage, /locked \|\| ownerAgreed/);
+  assert.match(manage, /Rebuild semantic index/);
+  assert.match(manage, /No confirmed matches/);
+  assert.match(manage, /return_to=\/manage/);
+  assert.match(clientReview, /password: ""/);
 });
 
 test("Cloudflare deployment provisions semantic search and never stores a fast owner-password fallback", async () => {

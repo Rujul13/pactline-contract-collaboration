@@ -57,7 +57,7 @@ export default function ClientReviewPage({ params }: { params: Promise<{ contrac
     setMessageType("success"); setMessage(result.locked ? "Both parties agreed. The final document is now locked and ready to download." : "Your agreement is recorded for this version. Waiting for the contract owner."); await loadWorkspace(contractId);
   }
 
-  async function signOut() { await fetch("/api/client/logout", { method: "POST" }); setWorkspace(null); setDrafts({}); setMessageType("success"); setMessage("Signed out securely."); }
+  async function signOut() { await fetch("/api/client/logout", { method: "POST" }); setWorkspace(null); setCredentials((current) => ({ ...current, password: "" })); setDrafts({}); setEditingId(null); setMessageType("success"); setMessage("Signed out securely."); }
   function downloadFinal() { const anchor = document.createElement("a"); anchor.href = `/api/client/contracts/${contractId}/download`; anchor.click(); }
 
   if (busy && !workspace) return <main className="review-portal"><div className="portal-card"><span className="portal-spinner"/><p>Opening secure contract review…</p></div></main>;

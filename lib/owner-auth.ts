@@ -3,6 +3,7 @@ import { sha256Hex, verifyPassword } from "./security";
 
 const COOKIE_NAME = "__Host-pactline_owner";
 const SESSION_HOURS = 12;
+const SESSION_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const OWNER_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const OWNER_LOGIN_MAX_FAILURES = 5;
 
@@ -73,7 +74,8 @@ export async function ownerFromSession(cookieHeader: string | null) {
   const [expiresText, tokenSignature] = token.split(".");
   const expiresAt = Number(expiresText);
   if (!expiresText || !tokenSignature || !Number.isSafeInteger(expiresAt)) return null;
-  if (expiresAt <= Date.now() || expiresAt > Date.now() + SESSION_HOURS * 60 * 60 * 1000) return null;
+  const now = Date.now();
+  if (expiresAt <= now || expiresAt > now + SESSION_HOURS * 60 * 60 * 1000 + SESSION_CLOCK_SKEW_MS) return null;
   const expected = await signature(expiresText, secret);
   if (!constantTimeEqual(expected, tokenSignature)) return null;
 

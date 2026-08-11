@@ -27,6 +27,29 @@ export async function indexPendingSearchChunks(organizationId: string, documentI
   return { indexed: rows.results.length, available: true };
 }
 
+export async function reindexPendingSearchChunks(organizationId: string) {
+  const vectorize = bindings().VECTORIZE;
+  const ai = bindings().AI;
+  const pendingBefore = await env.DB.prepare("SELECT COUNT(*) AS count FROM search_chunks WHERE organization_id=? AND index_status='pending'").bind(organizationId).first<{ count: number }>();
+  if (!vectorize || !ai) return { available: false, indexed: 0, pending: Number(pendingBefore?.count ?? 0) };
+
+  let indexed = 0;
+  for (let pass = 0; pass < 10; pass += 1) {
+    const documents = await env.DB.prepare("SELECT DISTINCT document_id FROM search_chunks WHERE organization_id=? AND index_status='pending' ORDER BY document_id LIMIT 25").bind(organizationId).all<{ document_id: string }>();
+    if (!documents.results.length) break;
+    let passIndexed = 0;
+    for (const document of documents.results) {
+      const result = await indexPendingSearchChunks(organizationId, document.document_id);
+      indexed += result.indexed;
+      passIndexed += result.indexed;
+    }
+    if (!passIndexed) break;
+  }
+
+  const remaining = await env.DB.prepare("SELECT COUNT(*) AS count FROM search_chunks WHERE organization_id=? AND index_status='pending'").bind(organizationId).first<{ count: number }>();
+  return { available: true, indexed, pending: Number(remaining?.count ?? 0) };
+}
+
 function keywordTerms(query: string) {
   return [...new Set(query.toLowerCase().match(/[a-z0-9$%]+/g) ?? [])].filter((term) => term.length > 2).slice(0, 8);
 }
