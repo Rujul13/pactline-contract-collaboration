@@ -32,7 +32,7 @@ export async function POST(request: Request) {
   await env.DOCUMENTS.put(objectKey, bytes, { httpMetadata: { contentType: DOCX_TYPE }, customMetadata: { contractId, documentId, sha256, uploadedBy: user.userId } });
   try {
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, status, current_version, created_at, updated_at) VALUES (?, ?, ?, ?, 'draft', 1, ?, ?)").bind(contractId, title, owner.id, owner.id, now, now),
+      env.DB.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, responsible_owner_id, status, lifecycle_stage, current_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'draft', 'draft', 1, ?, ?)").bind(contractId, title, owner.id, owner.id, owner.id, now, now),
       env.DB.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'initiator', 'Contract Owner', 'Owner Company', ?, ?, ?)").bind(ownerPartyId, contractId, user.email, now, now),
       env.DB.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'counterparty', ?, ?, ?, ?, ?)").bind(clientPartyId, contractId, reviewerName, clientCompany, reviewerEmail, now, now),
       ...rows.map((block) => env.DB.prepare("INSERT INTO document_blocks (id, contract_id, block_key, order_index, kind, current_text, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(block.id, contractId, block.blockKey, block.orderIndex, block.kind, block.text, block.hash, now, now)),

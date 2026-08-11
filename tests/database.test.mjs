@@ -17,11 +17,37 @@ async function migratedDatabase() {
 test("all migrations apply cleanly and match the active paragraph model", async () => {
   const database = await migratedDatabase();
   const tables = database.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map((row) => row.name);
-  for (const required of ["app_settings", "document_blocks", "paragraph_proposals", "access_sessions", "mutation_guards"]) assert.ok(tables.includes(required), required);
+  for (const required of ["app_settings", "document_blocks", "paragraph_proposals", "access_sessions", "mutation_guards", "review_rounds", "paragraph_comments", "contract_relationships", "reminder_schedules", "error_events"]) assert.ok(tables.includes(required), required);
   assert.ok(!tables.includes("clauses"));
   assert.ok(!tables.includes("proposed_changes"));
   const proposalColumns = database.prepare("PRAGMA table_info(paragraph_proposals)").all().map((row) => row.name);
   assert.ok(proposalColumns.includes("counter_text"));
+  assert.ok(proposalColumns.includes("review_round_id"));
+  assert.ok(proposalColumns.includes("resolution_reason"));
+  const contractColumns = database.prepare("PRAGMA table_info(contracts)").all().map((row) => row.name);
+  for (const required of ["lifecycle_stage", "renewal_date", "notice_period_days", "responsible_owner_id", "contract_value_minor", "currency", "risk_level", "review_deadline_at", "executed_at"]) assert.ok(contractColumns.includes(required), required);
+  database.close();
+});
+
+test("approvals are version-scoped and controlled amendments preserve the locked source", async () => {
+  const database = await migratedDatabase();
+  const now = new Date().toISOString();
+  database.prepare("INSERT INTO users (id,email,display_name,external_identity_id,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("owner", "owner@example.test", "Owner", "owner", now, now);
+  database.prepare("INSERT INTO contracts (id,title,initiator_id,approver_id,status,current_version,lifecycle_stage,responsible_owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run("source", "Executed MSA", "owner", "owner", "locked", 3, "executed", "owner", now, now);
+  database.prepare("INSERT INTO contracts (id,title,initiator_id,approver_id,status,current_version,lifecycle_stage,responsible_owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run("amendment", "Executed MSA — Amendment 1", "owner", "owner", "drafted", 1, "draft", "owner", now, now);
+  database.prepare("INSERT INTO approval_requests (id,contract_id,approver_id,version_number,kind,required,status,decision_reason,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?,?)").run("old-approval", "source", "owner", 2, "legal", "approved", "Approved for version 2", now, now);
+  database.prepare("INSERT INTO approval_requests (id,contract_id,approver_id,version_number,kind,required,status,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?)").run("current-approval", "source", "owner", 3, "legal", "pending", now, now);
+  database.prepare("INSERT INTO contract_relationships (id,source_contract_id,target_contract_id,relationship_type,created_by,created_at) VALUES (?,?,?,?,?,?)").run("relationship", "source", "amendment", "amends", "owner", now);
+
+  const incomplete = database.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").get("source", 3);
+  assert.equal(incomplete.total, 1, "an approval for a prior version cannot unlock version 3");
+  database.prepare("UPDATE approval_requests SET status='approved',decision_reason=?,resolved_at=?,updated_at=? WHERE id=?").run("Approved after review", now, now, "current-approval");
+  assert.equal(database.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id='source' AND version_number=3 AND required=1 AND status!='approved'").get().total, 0);
+  assert.equal(database.prepare("SELECT status,current_version FROM contracts WHERE id='source'").get().status, "locked");
+  const relationship = database.prepare("SELECT source_contract_id,target_contract_id,relationship_type FROM contract_relationships WHERE id='relationship'").get();
+  assert.equal(relationship.source_contract_id, "source");
+  assert.equal(relationship.target_contract_id, "amendment");
+  assert.equal(relationship.relationship_type, "amends");
   database.close();
 });
 

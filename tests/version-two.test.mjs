@@ -91,3 +91,28 @@ test("Cloudflare deployment provisions semantic search and never stores a fast o
   assert.match(config, /VECTORIZE/);
   assert.match(config, /0 6 \* \* \*/);
 });
+
+test("mature workflow controls are owner-scoped, version-aware, and visible to reviewers", async () => {
+  const [workflowPage, workflowApi, approvals, amendments, comments, reviewerComments, comparisons, agreements, monitoring, lifecycle] = await Promise.all([
+    source("app/workflow/[contractId]/page.tsx"),
+    source("app/api/contracts/[contractId]/workflow/route.ts"),
+    source("app/api/contracts/[contractId]/approvals/route.ts"),
+    source("app/api/contracts/[contractId]/amendments/route.ts"),
+    source("app/api/contracts/[contractId]/comments/route.ts"),
+    source("app/api/client/contracts/[contractId]/comments/route.ts"),
+    source("app/api/contracts/[contractId]/versions/compare/route.ts"),
+    source("lib/agreements.ts"),
+    source("lib/monitoring.ts"),
+    source("app/api/contracts/[contractId]/lifecycle/route.ts"),
+  ]);
+  for (const route of [workflowApi, approvals, amendments, comments, comparisons, lifecycle]) assert.match(route, /requireOwnerApi\(request\)/);
+  assert.match(reviewerComments, /getClientSession\(request\)/);
+  assert.match(reviewerComments, /session\.contractId !== contractId/);
+  assert.match(reviewerComments, /\["comment", "propose_changes"\]\.includes\(session\.permission\)/);
+  assert.match(approvals, /version_number=\?/);
+  assert.match(agreements, /Complete every required internal approval/);
+  assert.match(amendments, /source\.status !== "locked"/);
+  assert.match(comparisons, /compareVersions/);
+  assert.match(monitoring, /without contract text or secrets/);
+  for (const label of ["Lifecycle management", "Review rounds", "Required approvals", "Comments and threads", "Full-document redline", "Amendments and renewals", "Reminder schedule", "Operational errors"]) assert.match(workflowPage, new RegExp(label));
+});

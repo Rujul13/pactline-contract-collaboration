@@ -10,9 +10,11 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   if (auth.response) return auth.response;
   const user = auth.user;
   const { contractId, proposalId } = await context.params;
-  let body: { action?: "accept" | "reject" | "counter"; counterText?: string };
+  let body: { action?: "accept" | "reject" | "counter"; counterText?: string; reason?: string };
   try { body = await request.json() as typeof body; } catch { return Response.json({ error: "Valid JSON is required" }, { status: 400 }); }
   if (!body.action || !["accept", "reject", "counter"].includes(body.action)) return Response.json({ error: "Action must be accept, reject, or counter" }, { status: 400 });
+  const reason = body.reason?.trim();
+  if (!reason || reason.length < 3 || reason.length > 2000) return Response.json({ error: "A decision reason between 3 and 2,000 characters is required" }, { status: 400 });
   const owner = await env.DB.prepare("SELECT c.id FROM contracts c JOIN users u ON u.id = c.initiator_id WHERE c.id = ? AND u.external_identity_id = ?").bind(contractId, user.userId).first();
   if (!owner) return Response.json({ error: "Contract not found" }, { status: 404 });
   const proposal = await env.DB.prepare(`SELECT p.*, b.current_text, c.current_version, c.status AS contract_status FROM paragraph_proposals p JOIN document_blocks b ON b.id = p.block_id JOIN contracts c ON c.id = p.contract_id WHERE p.id = ? AND p.contract_id = ?`).bind(proposalId, contractId).first<ProposalRow>();
@@ -28,8 +30,8 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   if (body.action === "reject") {
     try {
       await guardedBatch(proposalGuard(false), [
-      env.DB.prepare("UPDATE paragraph_proposals SET status = 'rejected', resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, user.userId, now, proposalId),
-      env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.rejected', 'paragraph_proposal', ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, requestId, "{}", now),
+      env.DB.prepare("UPDATE paragraph_proposals SET status = 'rejected', resolution_reason=?, resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(reason, now, user.userId, now, proposalId),
+      env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.rejected', 'paragraph_proposal', ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, requestId, JSON.stringify({ reason }), now),
       ]);
     } catch (error) {
       if (error instanceof MutationConflictError) return Response.json({ error: "Resolution conflicted with another request" }, { status: 409 });
@@ -43,8 +45,8 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     if (counterText === proposal.original_text || counterText === proposal.proposed_text) return Response.json({ error: "Counterproposal must differ from both existing versions" }, { status: 400 });
     try {
       await guardedBatch(proposalGuard(), [
-      env.DB.prepare("UPDATE paragraph_proposals SET status = 'countered', counter_text = ?, resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(counterText, now, user.userId, now, proposalId),
-      env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.countered', 'paragraph_proposal', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, proposal.current_version, requestId, JSON.stringify({ blockId: proposal.block_id, counterText }), now),
+      env.DB.prepare("UPDATE paragraph_proposals SET status = 'countered', counter_text = ?, resolution_reason=?, resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(counterText, reason, now, user.userId, now, proposalId),
+      env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.countered', 'paragraph_proposal', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, proposal.current_version, requestId, JSON.stringify({ blockId: proposal.block_id, counterText, reason }), now),
       ]);
     } catch (error) {
       if (error instanceof MutationConflictError) return Response.json({ error: "Resolution conflicted with another request" }, { status: 409 });
@@ -57,13 +59,13 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   const beforeHash = await sha256Hex(proposal.original_text); const afterHash = await sha256Hex(proposal.proposed_text); const versionId = crypto.randomUUID();
   try {
     await guardedBatch(proposalGuard(), [
-    env.DB.prepare("UPDATE paragraph_proposals SET status = 'accepted', resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, user.userId, now, proposalId),
+    env.DB.prepare("UPDATE paragraph_proposals SET status = 'accepted', resolution_reason=?, resolved_at = ?, resolved_by = ?, updated_at = ? WHERE id = ? AND status = 'pending'").bind(reason, now, user.userId, now, proposalId),
     env.DB.prepare("UPDATE document_blocks SET current_text = ?, content_hash = ?, updated_at = ? WHERE id = ? AND current_text = ?").bind(proposal.proposed_text, afterHash, now, proposal.block_id, proposal.original_text),
     env.DB.prepare("INSERT INTO contract_versions (id, contract_id, version_number, created_by, snapshot, created_at) VALUES (?, ?, ?, ?, json(?), ?)").bind(versionId, contractId, nextVersion, user.userId, JSON.stringify(snapshot), now),
     env.DB.prepare("UPDATE contracts SET current_version = ?, status = 'negotiating', updated_at = ? WHERE id = ? AND current_version = ? AND status NOT IN ('agreed', 'locked')").bind(nextVersion, now, contractId, proposal.current_version),
     env.DB.prepare("UPDATE paragraph_proposals SET status='superseded', resolved_at=?, resolved_by=?, updated_at=? WHERE contract_id=? AND block_id=? AND id<>? AND status='pending'").bind(now, user.userId, now, contractId, proposal.block_id, proposalId),
     env.DB.prepare("UPDATE paragraph_proposals SET base_version=?, updated_at=? WHERE contract_id=? AND status='pending' AND EXISTS (SELECT 1 FROM document_blocks b WHERE b.id=paragraph_proposals.block_id AND b.current_text=paragraph_proposals.original_text)").bind(nextVersion, now, contractId),
-    env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, before_hash, after_hash, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.accepted', 'paragraph_proposal', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, nextVersion, beforeHash, afterHash, requestId, JSON.stringify({ previousVersion: proposal.current_version, blockId: proposal.block_id }), now),
+    env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, before_hash, after_hash, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.accepted', 'paragraph_proposal', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, nextVersion, beforeHash, afterHash, requestId, JSON.stringify({ previousVersion: proposal.current_version, blockId: proposal.block_id, reason }), now),
     ]);
   } catch (error) {
     if (error instanceof MutationConflictError) return Response.json({ error: "Acceptance conflicted with another request" }, { status: 409 });

@@ -64,6 +64,13 @@
       "when": 1786392146115,
       "tag": "0008_elite_microchip",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786422268594,
+      "tag": "0009_amused_tarantula",
+      "breakpoints": true
     }
   ]
 }

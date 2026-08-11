@@ -17,14 +17,16 @@ export async function GET(request: Request, context: { params: Promise<{ contrac
   const { contractId } = await context.params;
   const access = await contextFor(request, contractId);
   if (access.response) return access.response;
-  const [contract, blocks, proposals, agreements] = await Promise.all([
-    env.DB.prepare("SELECT id,title,status,current_version,origin,effective_date,expiration_date,updated_at FROM contracts WHERE id=?").bind(contractId).first(),
+  const [contract, blocks, proposals, agreements, comments, reviewRound] = await Promise.all([
+    env.DB.prepare("SELECT id,title,status,current_version,origin,effective_date,expiration_date,lifecycle_stage,review_deadline_at,updated_at FROM contracts WHERE id=?").bind(contractId).first(),
     env.DB.prepare("SELECT id,block_key,order_index,kind,current_text FROM document_blocks WHERE contract_id=? ORDER BY order_index").bind(contractId).all(),
-    access.legacyAccountId ? env.DB.prepare("SELECT id,block_id,base_version,original_text,proposed_text,counter_text,rationale,status,created_at FROM paragraph_proposals WHERE contract_id=? AND proposed_by_account_id=? ORDER BY created_at DESC").bind(contractId, access.legacyAccountId).all() : Promise.resolve({ results: [] }),
+    access.legacyAccountId ? env.DB.prepare("SELECT id,block_id,base_version,original_text,proposed_text,counter_text,rationale,resolution_reason,review_round_id,status,created_at FROM paragraph_proposals WHERE contract_id=? AND proposed_by_account_id=? ORDER BY created_at DESC").bind(contractId, access.legacyAccountId).all() : Promise.resolve({ results: [] }),
     env.DB.prepare("SELECT party_id,version_number FROM agreements WHERE contract_id=? AND version_number=(SELECT current_version FROM contracts WHERE id=?)").bind(contractId, contractId).all(),
+    env.DB.prepare("SELECT id,block_id,review_round_id,parent_comment_id,author_kind,author_display,body,status,created_at FROM paragraph_comments WHERE contract_id=? ORDER BY created_at ASC").bind(contractId).all(),
+    env.DB.prepare("SELECT id,round_number,status,deadline_at FROM review_rounds WHERE contract_id=? ORDER BY round_number DESC LIMIT 1").bind(contractId).first(),
   ]);
   if (!contract) return Response.json({ error: "Contract not found" }, { status: 404 });
-  return Response.json({ contract, blocks: blocks.results, proposals: proposals.results, agreements: agreements.results, reviewer: { name: access.session!.displayName, company: access.session!.organizationName, username: access.session!.username, permission: access.grant!.permission, partyId: access.partyId } }, { headers: { "cache-control": "private, no-store" } });
+  return Response.json({ contract, blocks: blocks.results, proposals: proposals.results, agreements: agreements.results, comments: comments.results, reviewRound, reviewer: { name: access.session!.displayName, company: access.session!.organizationName, username: access.session!.username, permission: access.grant!.permission, partyId: access.partyId } }, { headers: { "cache-control": "private, no-store" } });
 }
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
@@ -47,9 +49,10 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     seen.add(blockId); prepared.push({ id: crypto.randomUUID(), blockId, original, proposed, rationale: edit.rationale?.trim().slice(0, 2_000) || null });
   }
   const now = new Date().toISOString();
+  const reviewRound = await env.DB.prepare("SELECT id FROM review_rounds WHERE contract_id=? AND status='open' ORDER BY round_number DESC LIMIT 1").bind(contractId).first<{ id: string }>();
   const statements = prepared.flatMap((edit) => [
     env.DB.prepare("UPDATE paragraph_proposals SET status='superseded',updated_at=? WHERE contract_id=? AND block_id=? AND proposed_by_account_id=? AND status='countered'").bind(now, contractId, edit.blockId, access.legacyAccountId),
-    env.DB.prepare("INSERT INTO paragraph_proposals (id,contract_id,block_id,base_version,proposed_by_account_id,original_text,proposed_text,rationale,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'pending',?,?)").bind(edit.id, contractId, edit.blockId, body.baseVersion, access.legacyAccountId, edit.original, edit.proposed, edit.rationale, now, now),
+    env.DB.prepare("INSERT INTO paragraph_proposals (id,contract_id,block_id,base_version,proposed_by_account_id,original_text,proposed_text,rationale,review_round_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)").bind(edit.id, contractId, edit.blockId, body.baseVersion, access.legacyAccountId, edit.original, edit.proposed, edit.rationale, reviewRound?.id ?? null, now, now),
   ]);
   statements.push(env.DB.prepare("INSERT INTO audit_log_entries (id,contract_id,actor_id,actor_display,action,target_type,request_id,metadata,created_at) VALUES (?,?,?,?, 'paragraph_proposals.submitted','contract',?,json(?),?)").bind(crypto.randomUUID(), contractId, access.session!.accountId, `${access.session!.displayName} (${access.session!.username})`, crypto.randomUUID(), JSON.stringify({ proposalIds: prepared.map((item) => item.id), count: prepared.length, baseVersion: body.baseVersion, portal: true }), now));
   const conditions = prepared.map(() => "EXISTS (SELECT 1 FROM document_blocks WHERE id=? AND contract_id=? AND current_text=?)").join(" AND ");

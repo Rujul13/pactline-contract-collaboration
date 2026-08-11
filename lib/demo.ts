@@ -34,6 +34,7 @@ export async function ensureDemoWorkspace(user: ChatGPTUser) {
   const existing = await db.prepare("SELECT id FROM users WHERE external_identity_id = ?").bind(user.userId).first<{ id: string }>();
   const ownerId = existing?.id ?? userId;
   const now = new Date().toISOString();
+  const reviewDeadline = new Date(Date.now() + 14 * 86_400_000).toISOString();
   if (!existing) {
     await db.prepare("INSERT INTO users (id, email, display_name, external_identity_id, status, created_at, updated_at) VALUES (?, ?, 'Contract Owner', ?, 'active', ?, ?)")
       .bind(ownerId, user.email, user.userId, now, now).run();
@@ -55,12 +56,14 @@ export async function ensureDemoWorkspace(user: ChatGPTUser) {
   const snapshot = blockRows.map((block) => ({ id: block.id, block_key: `paragraph-${block.orderIndex + 1}`, order_index: block.orderIndex, kind: block.kind, current_text: block.text }));
 
   await db.batch([
-    db.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, status, current_version, created_at, updated_at) VALUES (?, 'Demo Master Services Agreement', ?, ?, 'negotiating', 1, ?, ?)").bind(DEMO_CONTRACT_ID, ownerId, ownerId, now, now),
+    db.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, status, lifecycle_stage, review_deadline_at, responsible_owner_id, contract_value_minor, currency, risk_level, current_version, created_at, updated_at) VALUES (?, 'Demo Master Services Agreement', ?, ?, 'negotiating', 'external_review', ?, ?, 2500000, 'USD', 'medium', 1, ?, ?)").bind(DEMO_CONTRACT_ID, ownerId, ownerId, reviewDeadline, ownerId, now, now),
     db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'initiator', 'Contract Owner', 'Owner Company', 'owner@example.test', ?, ?)").bind(ownerPartyId, DEMO_CONTRACT_ID, now, now),
     db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'counterparty', 'Client Reviewer', 'Client Company', 'reviewer@example.test', ?, ?)").bind(clientPartyId, DEMO_CONTRACT_ID, now, now),
     db.prepare("INSERT INTO access_accounts (id, contract_id, party_id, username, password_hash, permission, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'propose_changes', 'invited', '2099-12-31T23:59:59.000Z', ?, ?)").bind(accountId, DEMO_CONTRACT_ID, clientPartyId, DEMO_USERNAME, passwordHash, now, now),
     ...blockRows.map((block) => db.prepare("INSERT INTO document_blocks (id, contract_id, block_key, order_index, kind, current_text, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(block.id, DEMO_CONTRACT_ID, `paragraph-${block.orderIndex + 1}`, block.orderIndex, block.kind, block.text, block.hash, now, now)),
     db.prepare("INSERT INTO contract_versions (id, contract_id, version_number, created_by, snapshot, created_at) VALUES (?, ?, 1, ?, json(?), ?)").bind(versionId, DEMO_CONTRACT_ID, ownerId, JSON.stringify(snapshot), now),
+    db.prepare("INSERT INTO review_rounds (id,contract_id,round_number,status,deadline_at,opened_by,created_at,updated_at) VALUES ('sample-review-round-1',?,1,'open',?,?,?,?)").bind(DEMO_CONTRACT_ID, reviewDeadline, ownerId, now, now),
+    db.prepare("INSERT INTO reminder_schedules (id,contract_id,kind,channel,due_at,recipient,status,created_at,updated_at) VALUES ('sample-review-reminder-1',?,'review_deadline','in_app',?,'owner@example.test','scheduled',?,?)").bind(DEMO_CONTRACT_ID, reviewDeadline, now, now),
     db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, 'Contract Owner', 'demo.created', 'contract', ?, 1, ?, json(?), ?)").bind(crypto.randomUUID(), DEMO_CONTRACT_ID, ownerId, DEMO_CONTRACT_ID, crypto.randomUUID(), JSON.stringify({ genericDemo: true }), now),
   ]);
 

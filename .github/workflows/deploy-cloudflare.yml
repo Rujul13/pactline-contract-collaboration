@@ -271,14 +271,14 @@ jobs:
               exit 1
             fi
           }
-          assert_reviewer_forbidden POST "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_1/resolve" '{"action":"accept"}'
+          assert_reviewer_forbidden POST "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_1/resolve" '{"action":"accept","reason":"Reviewer sessions cannot resolve owner decisions."}'
           assert_reviewer_forbidden POST "$BASE_URL/api/contracts/sample-services-agreement/ai-suggestions/apply" '{"baseVersion":1,"operation":"replace_block","targetBlockId":"forged","replacementText":"forged"}'
           assert_reviewer_forbidden GET "$BASE_URL/api/contracts/sample-services-agreement/download"
 
           curl --fail-with-body --silent --show-error \
             --cookie "$RUNNER_TEMP/owner-cookies.txt" \
             --header "Content-Type: application/json" \
-            --data '{"action":"accept"}' \
+            --data '{"action":"accept","reason":"Accepted during the deployment negotiation regression test."}' \
             "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_1/resolve" \
             --output "$RUNNER_TEMP/accept-result-1.json"
           node --input-type=module -e '
@@ -289,7 +289,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --cookie "$RUNNER_TEMP/owner-cookies.txt" \
             --header "Content-Type: application/json" \
-            --data '{"action":"accept"}' \
+            --data '{"action":"accept","reason":"Accepted after the sibling proposal was rebased."}' \
             "$BASE_URL/api/contracts/sample-services-agreement/paragraph-proposals/$PROPOSAL_ID_2/resolve" \
             --output "$RUNNER_TEMP/accept-result-2.json"
           node --input-type=module -e '

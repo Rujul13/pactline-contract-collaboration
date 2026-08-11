@@ -21,6 +21,8 @@ export async function recordInitiatorAgreement(contractId: string, actor: Actor)
   if (contract.status === "locked") throw new DomainError("The contract is already locked", 409);
   const pending = await db.prepare("SELECT COUNT(*) AS total FROM paragraph_proposals WHERE contract_id = ? AND status = 'pending'").bind(contractId).first<{ total: number }>();
   if ((pending?.total ?? 0) > 0) throw new DomainError("Resolve every pending proposal before agreeing", 409);
+  const incompleteApprovals = await db.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+  if ((incompleteApprovals?.total ?? 0) > 0) throw new DomainError("Complete every required internal approval before the owner agrees", 409);
 
   const existing = await db.prepare("SELECT id FROM agreements WHERE contract_id = ? AND party_id = ? AND version_number = ?").bind(contractId, contract.initiator_party_id, contract.current_version).first<{ id: string }>();
   if (existing) return { agreed: true, locked: false, versionNumber: contract.current_version };
@@ -38,7 +40,7 @@ export async function recordInitiatorAgreement(contractId: string, actor: Actor)
 
   const lockAuditId = crypto.randomUUID();
   const lockGuard = mutationGuard(
-    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
     [contractId, contract.current_version],
   );
   try {
@@ -76,9 +78,11 @@ export async function recordCounterpartyAgreement(contractId: string, session: {
   }
   const agreementCount = await db.prepare("SELECT COUNT(DISTINCT party_id) AS total FROM agreements WHERE contract_id=? AND version_number=?").bind(contractId, contract.current_version).first<{ total: number }>();
   if ((agreementCount?.total ?? 0) < 2) return { agreed: true, locked: false, versionNumber: contract.current_version };
+  const incompleteApprovals = await db.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+  if ((incompleteApprovals?.total ?? 0) > 0) return { agreed: true, locked: false, approvalPending: true, versionNumber: contract.current_version };
   const now = new Date().toISOString();
   const lockGuard = mutationGuard(
-    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
     [contractId, contract.current_version],
   );
   try {

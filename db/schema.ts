@@ -56,6 +56,15 @@ export const contracts = sqliteTable("contracts", {
   submittedByPortalAccountId: text("submitted_by_portal_account_id"),
   effectiveDate: text("effective_date"),
   expirationDate: text("expiration_date"),
+  lifecycleStage: text("lifecycle_stage", { enum: ["draft", "internal_review", "external_review", "approved", "executed", "expired", "renewed"] }).notNull().default("draft"),
+  renewalDate: text("renewal_date"),
+  noticePeriodDays: integer("notice_period_days").notNull().default(30),
+  responsibleOwnerId: text("responsible_owner_id").references(() => users.id),
+  contractValueMinor: integer("contract_value_minor"),
+  currency: text("currency").notNull().default("USD"),
+  riskLevel: text("risk_level", { enum: ["low", "medium", "high", "critical"] }).notNull().default("medium"),
+  reviewDeadlineAt: text("review_deadline_at"),
+  executedAt: text("executed_at"),
   currentVersion: integer("current_version").notNull().default(1),
   lockedAt: text("locked_at"),
   ...timestamps,
@@ -91,8 +100,12 @@ export const approvalRequests = sqliteTable("approval_requests", {
   id: text("id").primaryKey(),
   contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
   approverId: text("approver_id").notNull().references(() => users.id),
+  versionNumber: integer("version_number").notNull().default(1),
+  kind: text("kind", { enum: ["legal", "finance", "security", "business"] }).notNull().default("business"),
+  required: integer("required", { mode: "boolean" }).notNull().default(true),
   status: text("status", { enum: ["pending", "approved", "rejected", "edits_requested"] }).notNull().default("pending"),
   comment: text("comment"),
+  decisionReason: text("decision_reason"),
   resolvedAt: text("resolved_at"),
   ...timestamps,
 }, (table) => [index("idx_approval_requests_approver_status").on(table.approverId, table.status), index("idx_approval_requests_contract").on(table.contractId)]);
@@ -171,11 +184,80 @@ export const paragraphProposals = sqliteTable("paragraph_proposals", {
   proposedText: text("proposed_text").notNull(),
   rationale: text("rationale"),
   counterText: text("counter_text"),
+  reviewRoundId: text("review_round_id"),
+  resolutionReason: text("resolution_reason"),
   status: text("status", { enum: ["pending", "accepted", "rejected", "countered", "superseded", "withdrawn"] }).notNull().default("pending"),
   resolvedAt: text("resolved_at"),
   resolvedBy: text("resolved_by"),
   ...timestamps,
 }, (table) => [index("idx_paragraph_proposals_queue").on(table.contractId, table.status, table.createdAt), index("idx_paragraph_proposals_block").on(table.blockId, table.createdAt)]);
+
+export const reviewRounds = sqliteTable("review_rounds", {
+  id: text("id").primaryKey(),
+  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  roundNumber: integer("round_number").notNull(),
+  status: text("status", { enum: ["open", "closed", "cancelled"] }).notNull().default("open"),
+  deadlineAt: text("deadline_at"),
+  openedBy: text("opened_by").notNull(),
+  closedBy: text("closed_by"),
+  closedAt: text("closed_at"),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_review_rounds_number").on(table.contractId, table.roundNumber), index("idx_review_rounds_status_deadline").on(table.contractId, table.status, table.deadlineAt)]);
+
+export const paragraphComments = sqliteTable("paragraph_comments", {
+  id: text("id").primaryKey(),
+  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  blockId: text("block_id").notNull().references(() => documentBlocks.id, { onDelete: "cascade" }),
+  reviewRoundId: text("review_round_id").references(() => reviewRounds.id, { onDelete: "set null" }),
+  parentCommentId: text("parent_comment_id"),
+  authorKind: text("author_kind", { enum: ["owner", "reviewer"] }).notNull(),
+  authorId: text("author_id").notNull(),
+  authorDisplay: text("author_display").notNull(),
+  body: text("body").notNull(),
+  status: text("status", { enum: ["open", "resolved"] }).notNull().default("open"),
+  resolvedBy: text("resolved_by"),
+  resolvedAt: text("resolved_at"),
+  ...timestamps,
+}, (table) => [index("idx_paragraph_comments_block").on(table.contractId, table.blockId, table.createdAt), index("idx_paragraph_comments_status").on(table.contractId, table.status)]);
+
+export const contractRelationships = sqliteTable("contract_relationships", {
+  id: text("id").primaryKey(),
+  sourceContractId: text("source_contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  targetContractId: text("target_contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  relationshipType: text("relationship_type", { enum: ["amends", "renews", "supersedes", "related"] }).notNull(),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [uniqueIndex("idx_contract_relationship_unique").on(table.sourceContractId, table.targetContractId, table.relationshipType), index("idx_contract_relationship_target").on(table.targetContractId)]);
+
+export const reminderSchedules = sqliteTable("reminder_schedules", {
+  id: text("id").primaryKey(),
+  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["review_deadline", "notice_window", "renewal", "expiration"] }).notNull(),
+  channel: text("channel", { enum: ["in_app", "email", "calendar"] }).notNull().default("in_app"),
+  dueAt: text("due_at").notNull(),
+  recipient: text("recipient"),
+  status: text("status", { enum: ["scheduled", "sent", "failed", "cancelled"] }).notNull().default("scheduled"),
+  providerMessageId: text("provider_message_id"),
+  lastError: text("last_error"),
+  ...timestamps,
+}, (table) => [index("idx_reminder_due_status").on(table.status, table.dueAt), index("idx_reminder_contract").on(table.contractId, table.kind)]);
+
+export const errorEvents = sqliteTable("error_events", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id").notNull(),
+  route: text("route").notNull(),
+  method: text("method").notNull(),
+  actorScope: text("actor_scope").notNull(),
+  contractId: text("contract_id").references(() => contracts.id, { onDelete: "set null" }),
+  severity: text("severity", { enum: ["warning", "error", "critical"] }).notNull().default("error"),
+  message: text("message").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  metadata: text("metadata", { mode: "json" }).notNull().$type<Record<string, unknown>>().default({}),
+  occurrenceCount: integer("occurrence_count").notNull().default(1),
+  firstSeenAt: text("first_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  resolvedAt: text("resolved_at"),
+}, (table) => [index("idx_error_events_open").on(table.resolvedAt, table.lastSeenAt), index("idx_error_events_fingerprint").on(table.fingerprint)]);
 
 export const appSettings = sqliteTable("app_settings", {
   key: text("key").primaryKey(),

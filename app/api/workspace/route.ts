@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
 import { ensureDemoWorkspace } from "@/lib/demo";
 import { ensureV2Workspace } from "@/lib/v2";
+import { captureError } from "@/lib/monitoring";
 
 export async function GET(request: Request) {
   const auth = await requireOwnerApi(request);
@@ -12,10 +13,12 @@ export async function GET(request: Request) {
     await ensureV2Workspace(user);
   } catch (error) {
     console.error("Unable to prepare the owner workspace", error);
+    const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    await captureError(error, { requestId, route: "/api/workspace", method: "GET", actorScope: "owner", severity: "critical" });
     return Response.json(
       {
         error: "Unable to prepare workspace",
-        detail: error instanceof Error ? error.message : "Unknown workspace error",
+        requestId,
       },
       { status: 500 },
     );
@@ -36,10 +39,12 @@ export async function GET(request: Request) {
     return Response.json({ owner: { name: "Contract Owner", email: user.email }, contracts: contracts.results }, { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     console.error("Unable to load the owner workspace", error);
+    const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    await captureError(error, { requestId, route: "/api/workspace", method: "GET", actorScope: "owner" });
     return Response.json(
       {
         error: "Unable to load workspace",
-        detail: error instanceof Error ? error.message : "Unknown workspace query error",
+        requestId,
       },
       { status: 500 },
     );
