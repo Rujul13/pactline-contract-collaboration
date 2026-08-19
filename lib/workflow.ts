@@ -2,6 +2,34 @@ import { env } from "cloudflare:workers";
 import { diffText } from "./text-diff";
 
 export const LIFECYCLE_STAGES = ["draft", "internal_review", "external_review", "approved", "executed", "expired", "renewed"] as const;
+export type LifecycleStage = typeof LIFECYCLE_STAGES[number];
+
+export const LIFECYCLE_TRANSITIONS: Record<LifecycleStage, LifecycleStage[]> = {
+  draft: ["internal_review"],
+  internal_review: ["external_review", "draft"],
+  external_review: ["approved", "internal_review"],
+  approved: ["executed", "external_review"],
+  executed: ["renewed", "expired"],
+  expired: ["renewed"],
+  renewed: [],
+};
+
+export const LIFECYCLE_FORWARD_TRANSITIONS: Record<LifecycleStage, LifecycleStage[]> = {
+  draft: ["internal_review"],
+  internal_review: ["external_review"],
+  external_review: ["approved"],
+  approved: ["executed"],
+  executed: ["renewed", "expired"],
+  expired: ["renewed"],
+  renewed: [],
+};
+
+export function isValidLifecycleTransition(current: LifecycleStage, next: LifecycleStage, locked: boolean): boolean {
+  if (current === next) return true;
+  const graph = locked ? LIFECYCLE_FORWARD_TRANSITIONS : LIFECYCLE_TRANSITIONS;
+  return graph[current].includes(next);
+}
+
 export const RISK_LEVELS = ["low", "medium", "high", "critical"] as const;
 
 export async function ownerContract(contractId: string, externalIdentityId: string) {

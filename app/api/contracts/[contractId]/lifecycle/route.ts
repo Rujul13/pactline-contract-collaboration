@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
-import { LIFECYCLE_STAGES, ownerContract, RISK_LEVELS } from "@/lib/workflow";
+import { isValidLifecycleTransition, LIFECYCLE_STAGES, type LifecycleStage, ownerContract, RISK_LEVELS } from "@/lib/workflow";
 import { captureError } from "@/lib/monitoring";
 
 const isoOrNull = (value: unknown) => value ? new Date(String(value)).toISOString() : null;
@@ -12,6 +12,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ contr
   let body: Record<string, unknown>; try { body = await request.json() as Record<string, unknown>; } catch { return Response.json({ error: "Valid JSON is required" }, { status: 400 }); }
   const stage = String(body.lifecycleStage ?? contract.lifecycle_stage); const risk = String(body.riskLevel ?? contract.risk_level);
   if (!LIFECYCLE_STAGES.includes(stage as never) || !RISK_LEVELS.includes(risk as never)) return Response.json({ error: "Invalid lifecycle stage or risk level" }, { status: 400 });
+  const currentStage = String(contract.lifecycle_stage) as LifecycleStage; const nextStage = stage as LifecycleStage; const locked = contract.status === "locked";
+  if (!isValidLifecycleTransition(currentStage, nextStage, locked)) return Response.json({ error: locked ? "Locked contracts can only move forward in the lifecycle" : `Invalid lifecycle transition from ${currentStage} to ${nextStage}` }, { status: 400 });
+  if (nextStage === "approved" && currentStage !== "approved") {
+    const pending = await env.DB.prepare("SELECT COUNT(*) AS total FROM paragraph_proposals WHERE contract_id=? AND status='pending'").bind(contractId).first<{ total: number }>();
+    if ((pending?.total ?? 0) > 0) return Response.json({ error: "Resolve every pending proposal before marking the contract approved" }, { status: 409 });
+    const incompleteApprovals = await env.DB.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+    if ((incompleteApprovals?.total ?? 0) > 0) return Response.json({ error: "Complete every required approval before marking the contract approved" }, { status: 409 });
+  }
   if (stage === "executed" && contract.status !== "locked") return Response.json({ error: "Lock the agreed document before marking it executed" }, { status: 409 });
   const noticePeriodDays = Math.max(0, Math.min(3650, Number(body.noticePeriodDays ?? contract.notice_period_days ?? 30)));
   const value = body.contractValue == null || body.contractValue === "" ? null : Math.round(Number(body.contractValue) * 100);
