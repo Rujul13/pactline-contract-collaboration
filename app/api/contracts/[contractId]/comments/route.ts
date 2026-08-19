@@ -2,8 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
 import { ownerContract } from "@/lib/workflow";
 import { captureError } from "@/lib/monitoring";
-
-type ParentRow = { id: string; block_id: string; status: string; parent_comment_id: string | null };
+import { validateReplyParent } from "@/lib/comment-threads";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string }> }) {
   const auth = await requireOwnerApi(request); if (auth.response) return auth.response;
@@ -21,11 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   }
   if (body.action === "reply") {
     const text = body.body?.trim(); if (!body.blockId || !body.parentCommentId || !text || text.length > 5000) return Response.json({ error: "Choose a paragraph, the comment you are replying to, and enter a reply up to 5,000 characters" }, { status: 400 });
-    const parent = await env.DB.prepare("SELECT id, block_id, status, parent_comment_id FROM paragraph_comments WHERE id=? AND contract_id=?").bind(body.parentCommentId, contractId).first<ParentRow>();
-    if (!parent) return Response.json({ error: "The comment you are replying to was not found on this contract" }, { status: 400 });
-    if (parent.parent_comment_id !== null) return Response.json({ error: "Replies can only be added to the original comment, not to another reply" }, { status: 400 });
-    if (parent.block_id !== body.blockId) return Response.json({ error: "The reply must target the same paragraph as the original comment" }, { status: 400 });
-    if (parent.status === "resolved") return Response.json({ error: "This thread is resolved. Reopen it before replying." }, { status: 409 });
+    const validation = await validateReplyParent(contractId, body.parentCommentId, body.blockId); if (!validation.ok) { const messages: Record<typeof validation.reason, string> = { not_found: "The comment you are replying to was not found on this contract", not_root: "Replies can only be added to the original comment, not to another reply", wrong_block: "The reply must target the same paragraph as the original comment", resolved: "This thread is resolved. Reopen it before replying." }; return Response.json({ error: messages[validation.reason] }, { status: validation.reason === "resolved" ? 409 : 400 }); }
     const round = await env.DB.prepare("SELECT id FROM review_rounds WHERE contract_id=? AND status='open' ORDER BY round_number DESC LIMIT 1").bind(contractId).first<{ id: string }>(); const id = crypto.randomUUID();
     await env.DB.batch([env.DB.prepare("INSERT INTO paragraph_comments (id,contract_id,block_id,review_round_id,parent_comment_id,author_kind,author_id,author_display,body,status,created_at,updated_at) VALUES (?,?,?,?,?,'owner',?,?,?,'open',?,?)").bind(id, contractId, body.blockId, round?.id ?? null, body.parentCommentId, auth.user.userId, auth.user.displayName, text, now, now), env.DB.prepare("INSERT INTO audit_log_entries (id,contract_id,actor_id,actor_display,action,target_type,target_id,request_id,metadata,created_at) VALUES (?,?,?,?, 'paragraph_comment.replied','paragraph_comment',?,?,json(?),?)").bind(crypto.randomUUID(), contractId, auth.user.userId, auth.user.displayName, id, requestId, JSON.stringify({ blockId: body.blockId, parentCommentId: body.parentCommentId }), now)]);
     return Response.json({ comment: { id, body: text, authorDisplay: auth.user.displayName } }, { status: 201 });
