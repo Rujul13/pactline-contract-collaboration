@@ -62,6 +62,7 @@ export default defineConfig(async () => {
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localBindingConfig,
+        persistState: process.env.PACTLINE_E2E === "true" ? { path: ".wrangler/state-e2e" } : true,
       }),
     ],
   };
