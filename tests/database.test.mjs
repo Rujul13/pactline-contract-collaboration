@@ -26,6 +26,10 @@ test("all migrations apply cleanly and match the active paragraph model", async 
   assert.ok(proposalColumns.includes("resolution_reason"));
   const contractColumns = database.prepare("PRAGMA table_info(contracts)").all().map((row) => row.name);
   for (const required of ["lifecycle_stage", "renewal_date", "notice_period_days", "responsible_owner_id", "contract_value_minor", "currency", "risk_level", "review_deadline_at", "executed_at"]) assert.ok(contractColumns.includes(required), required);
+  const commentColumns = database.prepare("PRAGMA table_info(paragraph_comments)").all().map((row) => row.name);
+  for (const required of ["parent_comment_id", "resolution_reason", "reopened_by", "reopened_at"]) assert.ok(commentColumns.includes(required), required);
+  const commentIndexes = database.prepare("PRAGMA index_list(paragraph_comments)").all().map((row) => row.name);
+  assert.ok(commentIndexes.includes("idx_paragraph_comments_parent"));
   database.close();
 });
 

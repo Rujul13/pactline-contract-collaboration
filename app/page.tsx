@@ -193,7 +193,7 @@ export default function Home() {
   async function resolveProposal(proposal: Proposal, action: "accept" | "reject" | "counter") {
     if (!contract) return; setBusy(true);
     const resolutionReason = decisionReason.trim() || window.prompt(`Reason for ${action === "counter" ? "countering" : `${action}ing`} this change:`)?.trim() || "";
-    if (resolutionReason.length < 3) { announce("A reason is required before resolving this proposal."); return; }
+    if (resolutionReason.length < 3) { setBusy(false); announce("A reason is required before resolving this proposal."); return; }
     const response = await fetch(`/api/contracts/${contract.id}/paragraph-proposals/${proposal.id}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, counterText: action === "counter" ? counterDraft : undefined, reason: resolutionReason }) });
     const result = await response.json() as { error?: string };
     setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to resolve the proposal"); return; }

@@ -217,8 +217,11 @@ export const paragraphComments = sqliteTable("paragraph_comments", {
   status: text("status", { enum: ["open", "resolved"] }).notNull().default("open"),
   resolvedBy: text("resolved_by"),
   resolvedAt: text("resolved_at"),
+  resolutionReason: text("resolution_reason"),
+  reopenedBy: text("reopened_by"),
+  reopenedAt: text("reopened_at"),
   ...timestamps,
-}, (table) => [index("idx_paragraph_comments_block").on(table.contractId, table.blockId, table.createdAt), index("idx_paragraph_comments_status").on(table.contractId, table.status)]);
+}, (table) => [index("idx_paragraph_comments_block").on(table.contractId, table.blockId, table.createdAt), index("idx_paragraph_comments_status").on(table.contractId, table.status), index("idx_paragraph_comments_parent").on(table.parentCommentId)]);
 
 export const contractRelationships = sqliteTable("contract_relationships", {
   id: text("id").primaryKey(),

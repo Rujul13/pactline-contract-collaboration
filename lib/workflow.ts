@@ -2,6 +2,34 @@ import { env } from "cloudflare:workers";
 import { diffText } from "./text-diff";
 
 export const LIFECYCLE_STAGES = ["draft", "internal_review", "external_review", "approved", "executed", "expired", "renewed"] as const;
+export type LifecycleStage = typeof LIFECYCLE_STAGES[number];
+
+export const LIFECYCLE_TRANSITIONS: Record<LifecycleStage, LifecycleStage[]> = {
+  draft: ["internal_review"],
+  internal_review: ["external_review", "draft"],
+  external_review: ["approved", "internal_review"],
+  approved: ["executed", "external_review"],
+  executed: ["renewed", "expired"],
+  expired: ["renewed"],
+  renewed: [],
+};
+
+export const LIFECYCLE_FORWARD_TRANSITIONS: Record<LifecycleStage, LifecycleStage[]> = {
+  draft: ["internal_review"],
+  internal_review: ["external_review"],
+  external_review: ["approved"],
+  approved: ["executed"],
+  executed: ["renewed", "expired"],
+  expired: ["renewed"],
+  renewed: [],
+};
+
+export function isValidLifecycleTransition(current: LifecycleStage, next: LifecycleStage, locked: boolean): boolean {
+  if (current === next) return true;
+  const graph = locked ? LIFECYCLE_FORWARD_TRANSITIONS : LIFECYCLE_TRANSITIONS;
+  return graph[current].includes(next);
+}
+
 export const RISK_LEVELS = ["low", "medium", "high", "critical"] as const;
 
 export async function ownerContract(contractId: string, externalIdentityId: string) {
@@ -32,11 +60,20 @@ function parseSnapshot(value: unknown): SnapshotBlock[] {
   try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
+function safeAnchorId(value: string) {
+  const slug = value.replace(/[^a-zA-Z0-9_-]/g, "-");
+  return /^[0-9]/.test(slug) ? `b-${slug}` : slug;
+}
+
 export async function compareVersions(contractId: string, from: number, to: number) {
-  const versions = await env.DB.prepare("SELECT version_number,snapshot,created_at FROM contract_versions WHERE contract_id=? AND version_number IN (?,?) ORDER BY version_number").bind(contractId, from, to).all<{ version_number: number; snapshot: unknown; created_at: string }>();
+  const versions = await env.DB.prepare("SELECT version_number,snapshot,created_at,created_by FROM contract_versions WHERE contract_id=? AND version_number IN (?,?) ORDER BY version_number").bind(contractId, from, to).all<{ version_number: number; snapshot: unknown; created_at: string; created_by: string | null }>();
   const fromVersion = versions.results.find((item) => item.version_number === from);
   const toVersion = versions.results.find((item) => item.version_number === to);
   if (!fromVersion || !toVersion) return null;
+  const authorIds = [fromVersion.created_by, toVersion.created_by].filter((id): id is string => Boolean(id));
+  const authorRows = authorIds.length ? await env.DB.prepare(`SELECT id,display_name FROM users WHERE id IN (${authorIds.map(() => "?").join(",")})`).bind(...authorIds).all<{ id: string; display_name: string }>() : { results: [] as Array<{ id: string; display_name: string }> };
+  const authorNames = new Map(authorRows.results.map((row) => [row.id, row.display_name]));
+  const authorName = (id: string | null) => (id && authorNames.get(id)) || "Unknown author";
   const oldBlocks = parseSnapshot(fromVersion.snapshot); const newBlocks = parseSnapshot(toVersion.snapshot);
   const oldByKey = new Map(oldBlocks.map((block) => [block.block_key || block.id, block]));
   const newByKey = new Map(newBlocks.map((block) => [block.block_key || block.id, block]));
@@ -44,9 +81,9 @@ export async function compareVersions(contractId: string, from: number, to: numb
   const blocks = keys.map((key) => {
     const oldBlock = oldByKey.get(key); const newBlock = newByKey.get(key);
     const originalText = oldBlock?.current_text ?? ""; const proposedText = newBlock?.current_text ?? "";
-    return { key, kind: newBlock?.kind ?? oldBlock?.kind ?? "body", orderIndex: newBlock?.order_index ?? oldBlock?.order_index ?? 0, originalText, proposedText, changed: originalText !== proposedText, diff: diffText(originalText, proposedText) };
+    return { key, anchorId: safeAnchorId(newBlock?.id ?? oldBlock?.id ?? key), kind: newBlock?.kind ?? oldBlock?.kind ?? "body", orderIndex: newBlock?.order_index ?? oldBlock?.order_index ?? 0, originalText, proposedText, changed: originalText !== proposedText, diff: diffText(originalText, proposedText) };
   }).sort((a, b) => a.orderIndex - b.orderIndex);
-  return { from: { number: fromVersion.version_number, createdAt: fromVersion.created_at }, to: { number: toVersion.version_number, createdAt: toVersion.created_at }, blocks, changedCount: blocks.filter((block) => block.changed).length };
+  return { from: { number: fromVersion.version_number, createdAt: fromVersion.created_at, author: authorName(fromVersion.created_by) }, to: { number: toVersion.version_number, createdAt: toVersion.created_at, author: authorName(toVersion.created_by) }, blocks, changedCount: blocks.filter((block) => block.changed).length };
 }
 
 export function calendarText(contract: Record<string, unknown>, reminders: Array<Record<string, unknown>>) {

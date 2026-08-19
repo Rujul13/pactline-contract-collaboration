@@ -11,6 +11,7 @@
     "start": "vinext start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs tests/database.test.mjs tests/version-two.test.mjs && node --experimental-strip-types --test tests/security.test.ts tests/docx.test.ts tests/ai-scope.test.ts tests/text-diff.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "deploy:cloudflare": "npm run build && wrangler deploy --config dist/server/wrangler.json"
   },
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.50.0",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",

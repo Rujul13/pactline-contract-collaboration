@@ -71,6 +71,13 @@
       "when": 1786422268594,
       "tag": "0009_amused_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787099549259,
+      "tag": "0010_mute_owl",
+      "breakpoints": true
     }
   ]
 }
