@@ -223,3 +223,11 @@ html { scroll-behavior:smooth; }
 .thread-actions{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .thread-actions textarea{min-height:60px}
 .thread-resolution{color:var(--muted);margin-top:6px}
+.redline-meta{display:flex;justify-content:space-between;gap:12px;font-size:.85em;color:var(--muted);margin:8px 0}
+.redline-toolbar{justify-content:space-between}
+.redline-mode{display:flex;gap:4px}
+.redline-mode button{border:1px solid var(--line);background:transparent;border-radius:6px;padding:4px 10px}
+.redline-mode button.active{font-weight:600;background:var(--mint)}
+.jump-to-change{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0;font-size:.85em}
+.jump-to-change a{padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--forest)}
+.redline-document.side-by-side article>div{display:grid;grid-template-columns:1fr 1fr;gap:12px}
