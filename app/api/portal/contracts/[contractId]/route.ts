@@ -22,7 +22,7 @@ export async function GET(request: Request, context: { params: Promise<{ contrac
     env.DB.prepare("SELECT id,block_key,order_index,kind,current_text FROM document_blocks WHERE contract_id=? ORDER BY order_index").bind(contractId).all(),
     access.legacyAccountId ? env.DB.prepare("SELECT id,block_id,base_version,original_text,proposed_text,counter_text,rationale,resolution_reason,review_round_id,status,created_at FROM paragraph_proposals WHERE contract_id=? AND proposed_by_account_id=? ORDER BY created_at DESC").bind(contractId, access.legacyAccountId).all() : Promise.resolve({ results: [] }),
     env.DB.prepare("SELECT party_id,version_number FROM agreements WHERE contract_id=? AND version_number=(SELECT current_version FROM contracts WHERE id=?)").bind(contractId, contractId).all(),
-    env.DB.prepare("SELECT id,block_id,review_round_id,parent_comment_id,author_kind,author_display,body,status,created_at FROM paragraph_comments WHERE contract_id=? ORDER BY created_at ASC").bind(contractId).all(),
+    env.DB.prepare("SELECT id,block_id,review_round_id,parent_comment_id,author_kind,author_display,body,status,resolution_reason,created_at FROM paragraph_comments WHERE contract_id=? ORDER BY created_at ASC").bind(contractId).all(),
     env.DB.prepare("SELECT id,round_number,status,deadline_at FROM review_rounds WHERE contract_id=? ORDER BY round_number DESC LIMIT 1").bind(contractId).first(),
   ]);
   if (!contract) return Response.json({ error: "Contract not found" }, { status: 404 });
