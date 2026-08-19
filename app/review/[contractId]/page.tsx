@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useState } from "react";
 
 type Block = { id: string; block_key: string; order_index: number; kind: "title" | "heading" | "body"; current_text: string };
 type Proposal = { id: string; block_id: string; original_text: string; proposed_text: string; counter_text?: string; resolution_reason?: string; status: string };
-type Comment = { id: string; block_id: string; author_kind: "owner" | "reviewer"; author_display: string; body: string; status: string; created_at: string };
+type Comment = { id: string; block_id: string; parent_comment_id: string | null; author_kind: "owner" | "reviewer"; author_display: string; body: string; status: string; resolution_reason?: string; created_at: string };
 type Workspace = {
   contract: { id: string; title: string; status: string; current_version: number; lifecycle_stage: string; review_deadline_at?: string };
   blocks: Block[];
@@ -17,7 +17,7 @@ type Workspace = {
 
 export default function ClientReviewPage({ params }: { params: Promise<{ contractId: string }> }) {
   const { contractId } = use(params); const [workspace, setWorkspace] = useState<Workspace | null>(null); const [credentials, setCredentials] = useState({ username: "", password: "" });
-  const [drafts, setDrafts] = useState<Record<string, string>>({}); const [editingId, setEditingId] = useState<string | null>(null); const [commentingId, setCommentingId] = useState<string | null>(null); const [commentDraft, setCommentDraft] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({}); const [editingId, setEditingId] = useState<string | null>(null); const [commentingId, setCommentingId] = useState<string | null>(null); const [replyingId, setReplyingId] = useState<string | null>(null); const [commentDraft, setCommentDraft] = useState("");
   const [message, setMessage] = useState(""); const [messageType, setMessageType] = useState<"success" | "error">("success"); const [busy, setBusy] = useState(true);
 
   const loadWorkspace = useCallback(async () => {
@@ -39,9 +39,9 @@ export default function ClientReviewPage({ params }: { params: Promise<{ contrac
     if (!response.ok) { setBusy(false); setMessageType("error"); setMessage(result.error ?? "Unable to submit changes"); return; }
     setDrafts({}); setEditingId(null); setMessageType("success"); setMessage(`${edits.length} proposed ${edits.length === 1 ? "change" : "changes"} sent to the contract owner.`); await loadWorkspace();
   }
-  async function addComment(blockId: string) {
-    const body = commentDraft.trim(); if (!body) return; setBusy(true); const response = await fetch(`/api/client/contracts/${contractId}/comments`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ blockId, body }) }); const result = await response.json() as { error?: string }; setBusy(false);
-    if (!response.ok) { setMessageType("error"); setMessage(result.error ?? "Unable to add comment"); return; } setCommentDraft(""); setCommentingId(null); setMessageType("success"); setMessage("Comment added to the paragraph discussion."); await loadWorkspace();
+  async function addComment(blockId: string, parentCommentId: string | null) {
+    const body = commentDraft.trim(); if (!body) return; setBusy(true); const response = await fetch(`/api/client/contracts/${contractId}/comments`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ blockId, body, parentCommentId: parentCommentId ?? undefined }) }); const result = await response.json() as { error?: string }; setBusy(false);
+    if (!response.ok) { setMessageType("error"); setMessage(result.error ?? "Unable to add comment"); return; } setCommentDraft(""); setCommentingId(null); setReplyingId(null); setMessageType("success"); setMessage(parentCommentId ? "Reply added to the thread." : "Comment added to the paragraph discussion."); await loadWorkspace();
   }
   async function agree() {
     setBusy(true); setMessage(""); const response = await fetch(`/api/client/contracts/${encodeURIComponent(contractId)}/agree`, { method: "POST" }); const result = await response.json() as { locked?: boolean; approvalPending?: boolean; error?: string }; setBusy(false);
@@ -64,10 +64,14 @@ export default function ClientReviewPage({ params }: { params: Promise<{ contrac
         const draft = drafts[block.id]; const editing = editingId === block.id; const ownerCounter = counters.find((proposal) => proposal.block_id === block.id); const comments = workspace.comments.filter((comment) => comment.block_id === block.id);
         return <section className={`doc-paragraph ${block.kind} ${draft ? "staged" : ""} ${ownerCounter ? "counter-returned" : ""}`} key={block.id}>
           {editing ? <div className="paragraph-editor"><label htmlFor={`review-block-${block.id}`}>Proposed paragraph text</label><textarea id={`review-block-${block.id}`} value={draft ?? block.current_text} onChange={(event) => setDrafts((current) => ({ ...current, [block.id]: event.target.value }))} rows={Math.max(3, Math.ceil((draft ?? block.current_text).length / 85))} autoFocus/><div><button onClick={() => setEditingId(null)}>Done</button>{draft && <button className="discard" onClick={() => setDrafts((current) => { const next = { ...current }; delete next[block.id]; return next; })}>Discard</button>}</div></div> : <button className="paragraph-content" disabled={locked || clientAgreed} onClick={() => setEditingId(block.id)}><span>{draft ?? block.current_text}</span><i>{draft ? "Proposed" : ownerCounter ? "Owner counter" : locked ? "Locked" : "Edit"}</i></button>}
-          {!locked && !clientAgreed && block.kind !== "title" && <button className="paragraph-comment-trigger" onClick={() => { setCommentingId(commentingId === block.id ? null : block.id); setCommentDraft(""); }}>Comment {comments.length ? `(${comments.length})` : ""}</button>}
+          {!locked && !clientAgreed && block.kind !== "title" && <button className="paragraph-comment-trigger" onClick={() => { setCommentingId(commentingId === block.id ? null : block.id); setReplyingId(null); setCommentDraft(""); }}>Comment {comments.filter((comment) => !comment.parent_comment_id).length ? `(${comments.filter((comment) => !comment.parent_comment_id).length})` : ""}</button>}
           {ownerCounter && !draft && <div className="client-counter-card"><strong>Owner counterproposal</strong><p>{ownerCounter.counter_text}</p>{ownerCounter.resolution_reason && <small>Reason: {ownerCounter.resolution_reason}</small>}<button disabled={locked || clientAgreed} onClick={() => { setDrafts((current) => ({ ...current, [block.id]: ownerCounter.counter_text! })); setEditingId(block.id); }}>Continue negotiation with this text</button></div>}
-          {comments.length > 0 && <div className="paragraph-thread">{comments.map((comment) => <article key={comment.id} className={comment.status}><div><strong>{comment.author_display}</strong><span>{new Date(comment.created_at).toLocaleString()}</span></div><p>{comment.body}</p><small>{comment.status}</small></article>)}</div>}
-          {commentingId === block.id && <div className="paragraph-comment-composer"><label htmlFor={`comment-${block.id}`}>Add to this paragraph discussion</label><textarea id={`comment-${block.id}`} value={commentDraft} maxLength={5000} onChange={(event) => setCommentDraft(event.target.value)} rows={3}/><div><button onClick={() => setCommentingId(null)}>Cancel</button><button disabled={busy || !commentDraft.trim()} onClick={() => void addComment(block.id)}>Post comment</button></div></div>}
+          {comments.length > 0 && <div className="paragraph-thread">{comments.filter((comment) => !comment.parent_comment_id).map((root) => <article key={root.id} className={`thread ${root.status}`}><div><strong>{root.author_display}</strong><span>{new Date(root.created_at).toLocaleString()}</span></div><p>{root.body}</p>
+            {comments.filter((reply) => reply.parent_comment_id === root.id).map((reply) => <div className="thread-reply" key={reply.id}><div><strong>{reply.author_display}</strong><span>{new Date(reply.created_at).toLocaleString()}</span></div><p>{reply.body}</p></div>)}
+            {root.status === "resolved" ? <p className="thread-resolution"><small>Resolved{root.resolution_reason ? `: ${root.resolution_reason}` : ""}</small></p> : !locked && !clientAgreed && <button className="thread-reply-trigger" onClick={() => { setReplyingId(replyingId === root.id ? null : root.id); setCommentingId(null); setCommentDraft(""); }}>Reply</button>}
+            {replyingId === root.id && <div className="paragraph-comment-composer"><textarea value={commentDraft} maxLength={5000} onChange={(event) => setCommentDraft(event.target.value)} rows={2}/><div><button onClick={() => setReplyingId(null)}>Cancel</button><button disabled={busy || !commentDraft.trim()} onClick={() => void addComment(block.id, root.id)}>Post reply</button></div></div>}
+          </article>)}</div>}
+          {commentingId === block.id && <div className="paragraph-comment-composer"><label htmlFor={`comment-${block.id}`}>Add to this paragraph discussion</label><textarea id={`comment-${block.id}`} value={commentDraft} maxLength={5000} onChange={(event) => setCommentDraft(event.target.value)} rows={3}/><div><button onClick={() => setCommentingId(null)}>Cancel</button><button disabled={busy || !commentDraft.trim()} onClick={() => void addComment(block.id, null)}>Post comment</button></div></div>}
         </section>;
       })}
     </div></article>
