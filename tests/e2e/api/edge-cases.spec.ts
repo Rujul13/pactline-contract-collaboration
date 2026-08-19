@@ -141,6 +141,40 @@ test.describe("API authorization and edge cases", () => {
       const nestedResponse = await request.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-6", parentCommentId: replyId, body: "reply to a reply" } });
       expect(nestedResponse.status()).toBe(400);
     });
+
+    test("reply using a parent comment from a different contract returns 400", async ({ request }) => {
+      // This test explicitly exercises the AND contract_id=? isolation clause in
+      // validateReplyParent (lib/comment-threads.ts:8). A parentCommentId that
+      // belongs to DEMO_CONTRACT_ID must not be accepted as a valid parent when
+      // the reply targets a different contract — the row is invisible across the
+      // contract boundary and must be treated as not_found (→ 400).
+
+      // Create a second, real contract (contract B) so the ownerContract() guard
+      // in the comments route passes and the request actually reaches
+      // validateReplyParent. A non-existent contractId would short-circuit with
+      // 404 before the parent validation ever runs.
+      const createResponse = await request.post("/api/contracts", {
+        multipart: {
+          title: "Cross-Contract Parent Isolation Test",
+          document: { name: "valid.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: validDocxBuffer() },
+        },
+      });
+      expect(createResponse.status()).toBe(201);
+      const { contract: contractB } = (await createResponse.json()) as { contract: { id: string } };
+
+      // Add a root comment on contract A (the demo contract).
+      const rootIdOnContractA = await addRootComment(request, "sample-block-6", "root on contract A");
+
+      // Attempt to use the contract-A comment as the reply parent on contract B.
+      // validateReplyParent queries WHERE id=? AND contract_id=?, so the row is
+      // not visible on contract B and the server must return 400 (reason: not_found).
+      const response = await request.post(`/api/contracts/${contractB.id}/comments`, {
+        data: { action: "reply", blockId: "sample-block-6", parentCommentId: rootIdOnContractA, body: "cross-contract reply attempt" },
+      });
+      expect(response.status()).toBe(400);
+      const body = (await response.json()) as { error: string };
+      expect(body.error).toContain("not found on this contract");
+    });
   });
 
   test("resolving an already-resolved proposal returns 409", async ({ request }) => {
@@ -168,13 +202,24 @@ test.describe("API authorization and edge cases", () => {
   });
 
   test("mutating a locked contract returns 409", async ({ request }) => {
+    // Owner agrees first on the shared (owner) request context.
     const ownerAgree = await request.post(`/api/contracts/${DEMO_CONTRACT_ID}/agree`);
     expect(ownerAgree.ok()).toBeTruthy();
-    await request.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
-    const reviewerAgree = await request.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/agree`);
+
+    // Reviewer steps run in a separate, disposable context for the same reason
+    // as the "resolving an already-resolved proposal" test above: logging in as
+    // a reviewer on the shared `request` fixture would attach the
+    // __Host-pactline_client cookie to every subsequent call, causing
+    // requireOwnerApi() to return 403 (not the 409 under test) for any later
+    // owner-side request in this or a subsequent test.
+    const reviewerContext = await playwrightRequest.newContext({ baseURL: BASE_URL });
+    const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    expect(loginResponse.ok()).toBeTruthy();
+    const reviewerAgree = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/agree`);
     const reviewerAgreeBody = (await reviewerAgree.json()) as { locked?: boolean };
     expect(reviewerAgreeBody.locked).toBe(true);
-    const proposeResponse = await request.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
+    const proposeResponse = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
     expect(proposeResponse.status()).toBe(409);
+    await reviewerContext.dispose();
   });
 });
