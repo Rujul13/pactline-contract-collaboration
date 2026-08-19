@@ -230,4 +230,4 @@ html { scroll-behavior:smooth; }
 .redline-mode button.active{font-weight:600;background:var(--mint)}
 .jump-to-change{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0;font-size:.85em}
 .jump-to-change a{padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--forest)}
-.redline-document.side-by-side article>div{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.redline-document.unified article>div{display:block}
