@@ -17,7 +17,7 @@ async function migratedDatabase() {
 test("all migrations apply cleanly and match the active paragraph model", async () => {
   const database = await migratedDatabase();
   const tables = database.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map((row) => row.name);
-  for (const required of ["app_settings", "document_blocks", "paragraph_proposals", "access_sessions", "mutation_guards", "review_rounds", "paragraph_comments", "contract_relationships", "reminder_schedules", "error_events"]) assert.ok(tables.includes(required), required);
+  for (const required of ["app_settings", "document_blocks", "paragraph_proposals", "access_sessions", "mutation_guards", "review_rounds", "paragraph_comments", "contract_relationships", "reminder_schedules", "error_events", "notification_deliveries", "notification_preferences"]) assert.ok(tables.includes(required), required);
   assert.ok(!tables.includes("clauses"));
   assert.ok(!tables.includes("proposed_changes"));
   const proposalColumns = database.prepare("PRAGMA table_info(paragraph_proposals)").all().map((row) => row.name);
@@ -30,6 +30,18 @@ test("all migrations apply cleanly and match the active paragraph model", async 
   for (const required of ["parent_comment_id", "resolution_reason", "reopened_by", "reopened_at"]) assert.ok(commentColumns.includes(required), required);
   const commentIndexes = database.prepare("PRAGMA index_list(paragraph_comments)").all().map((row) => row.name);
   assert.ok(commentIndexes.includes("idx_paragraph_comments_parent"));
+
+  const deliveryColumns = database.prepare("PRAGMA table_info(notification_deliveries)").all().map((row) => row.name);
+  for (const required of ["recipient_email", "template_name", "template_payload", "status", "attempts", "next_attempt_at", "last_error"]) assert.ok(deliveryColumns.includes(required), required);
+  const deliveryIndexes = database.prepare("PRAGMA index_list(notification_deliveries)").all().map((row) => row.name);
+  assert.ok(deliveryIndexes.includes("idx_notification_deliveries_status_next"));
+
+  const prefColumns = database.prepare("PRAGMA table_info(notification_preferences)").all().map((row) => row.name);
+  for (const required of ["user_id", "portal_account_id", "notification_type", "unsubscribed"]) assert.ok(prefColumns.includes(required), required);
+  const prefIndexes = database.prepare("PRAGMA index_list(notification_preferences)").all().map((row) => row.name);
+  assert.ok(prefIndexes.includes("idx_notification_pref_user_type"));
+  assert.ok(prefIndexes.includes("idx_notification_pref_portal_type"));
+
   database.close();
 });
 

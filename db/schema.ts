@@ -448,3 +448,29 @@ export const alerts = sqliteTable("alerts", {
   resolvedAt: text("resolved_at"),
   ...timestamps,
 }, (table) => [uniqueIndex("idx_alerts_dedupe").on(table.dedupeKey), index("idx_alerts_org_status_due").on(table.organizationId, table.status, table.dueAt)]);
+
+export const notificationDeliveries = sqliteTable("notification_deliveries", {
+  id: text("id").primaryKey(),
+  recipientEmail: text("recipient_email").notNull(),
+  templateName: text("template_name").notNull(),
+  templatePayload: text("template_payload", { mode: "json" }).notNull().$type<Record<string, unknown>>(),
+  status: text("status", { enum: ["queued", "logged", "failed"] }).notNull().default("queued"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: text("next_attempt_at"),
+  lastError: text("last_error"),
+  ...timestamps,
+}, (table) => [
+  index("idx_notification_deliveries_status_next").on(table.status, table.nextAttemptAt),
+]);
+
+export const notificationPreferences = sqliteTable("notification_preferences", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+  portalAccountId: text("portal_account_id").references(() => portalAccounts.id, { onDelete: "cascade" }),
+  notificationType: text("notification_type", { enum: ["renewal", "comment", "approval", "amendment"] }).notNull(),
+  unsubscribed: integer("unsubscribed", { mode: "boolean" }).notNull().default(false),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("idx_notification_pref_user_type").on(table.userId, table.notificationType),
+  uniqueIndex("idx_notification_pref_portal_type").on(table.portalAccountId, table.notificationType),
+]);
