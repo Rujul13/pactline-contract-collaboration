@@ -6,7 +6,7 @@ test.describe("Supplier portal comments and authorization", () => {
     await resetDemo();
   });
 
-  test("supplier comment creation, replies, view-only restrictions, and resolved thread layout", async ({ page }) => {
+  test("supplier comment creation, replies, view-only restrictions, and resolved thread layout", async ({ page, request }) => {
     // 1. Login to the Supplier Portal
     await page.goto("/portal");
     await expect(page.getByRole("heading", { name: "Supplier portal" })).toBeVisible();
@@ -59,7 +59,7 @@ test.describe("Supplier portal comments and authorization", () => {
     // Verify reply is posted
     await expect(page.getByText("Reply added to the thread.")).toBeVisible();
     await expect(thread.getByText("Staging reply from supplier.")).toBeVisible();
-    
+
     // Ensure the Reply button is no longer open / reply composer is closed
     await expect(replyComposer).not.toBeVisible();
 
@@ -75,6 +75,14 @@ test.describe("Supplier portal comments and authorization", () => {
     // Verify Comment trigger is not visible on paragraphs
     const expiredParagraph = page.locator(".supplier-block").filter({ hasText: "The parties will protect confidential information" });
     await expect(expiredParagraph.locator(".paragraph-comment-trigger")).not.toBeVisible();
+
+    // Direct E2E API assertion: a view-only supplier receives 403 when posting a comment
+    const portalLoginRes = await request.post("/api/portal/login", { data: { username: "supplier.reviewer", password: "SupplierDemo!2026" } });
+    expect(portalLoginRes.ok()).toBeTruthy();
+    const apiCommentRes = await request.post("/api/portal/contracts/sample-expired-nda/comments", {
+      data: { blockId: "expired-nda-body", body: "Attempted bypass comment" }
+    });
+    expect(apiCommentRes.status()).toBe(403);
 
     // 6. Owner resolves the comment thread on DEMO_CONTRACT_ID and verify layout change
     // We use a clean request context to avoid cookie pollution, automatically authenticated as owner on localhost
