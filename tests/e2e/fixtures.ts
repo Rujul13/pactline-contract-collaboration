@@ -23,24 +23,35 @@ function migrateLocalD1(): void {
   const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA foreign_keys=ON");
 
-  const tables = (db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all() as Array<{ name: string }>).map((row) => row.name);
-  const hasNotifications = tables.includes("notification_deliveries");
+  // Create migrations table if not exists
+  db.exec("CREATE TABLE IF NOT EXISTS __drizzle_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)");
 
-  if (!hasNotifications) {
-    db.exec("PRAGMA foreign_keys=OFF");
-    const userTables = (db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>).map((row) => row.name);
-    for (const table of userTables) {
-      db.exec(`DROP TABLE IF EXISTS "${table}"`);
+  // Seed migrations for existing database if this is the first run using this tracker
+  const hasContracts = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='contracts'").all().length > 0;
+  const migrationCount = (db.prepare("SELECT COUNT(*) as count FROM __drizzle_migrations").get() as { count: number }).count;
+
+  if (hasContracts && migrationCount === 0) {
+    const files = readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort();
+    for (const file of files) {
+      if (file < "0012_notification_idempotency.sql") {
+        db.prepare("INSERT INTO __drizzle_migrations (name) VALUES (?)").run(file);
+      }
     }
-    db.exec("PRAGMA foreign_keys=ON");
   }
 
-  const alreadyMigrated = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='contracts'").all().length > 0;
-  if (!alreadyMigrated) {
-    for (const file of readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort()) {
+  const applied = new Set(
+    (db.prepare("SELECT name FROM __drizzle_migrations").all() as Array<{ name: string }>).map((row) => row.name)
+  );
+
+  const files = readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort();
+  for (const file of files) {
+    if (!applied.has(file)) {
+      console.log(`Applying E2E migration: ${file}`);
       db.exec(readFileSync(`drizzle/${file}`, "utf8").replaceAll("--> statement-breakpoint", ""));
+      db.prepare("INSERT INTO __drizzle_migrations (name) VALUES (?)").run(file);
     }
   }
+
   db.close();
   migrated = true;
 }

@@ -46,6 +46,31 @@ export function shouldRedact(key: string): boolean {
   return false;
 }
 
+/**
+ * Classifies an error into a safe allow-listed category for storage.
+ * Raw exception text is NEVER persisted — only the category is stored.
+ */
+export function classifyError(error: unknown): string {
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (msg.includes("not found") || msg.includes("no such") || msg.includes("404")) {
+    return "resource_not_found";
+  }
+  if (msg.includes("unauthorized") || msg.includes("forbidden") || msg.includes("401") || msg.includes("403")) {
+    return "authorization_failure";
+  }
+  if (msg.includes("constraint") || msg.includes("unique") || msg.includes("conflict")) {
+    return "constraint_violation";
+  }
+  if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("deadline")) {
+    return "timeout";
+  }
+  if (msg.includes("network") || msg.includes("connection") || msg.includes("econnrefused")) {
+    return "network_error";
+  }
+  return "application_error";
+}
+
+/** @deprecated Use classifyError instead. Kept for backward compatibility with existing tests. */
 export function sanitizeErrorMessage(message: string): string {
   const lower = message.toLowerCase();
   const containsSensitive = [
@@ -56,7 +81,9 @@ export function sanitizeErrorMessage(message: string): string {
   if (containsSensitive) {
     return "An operational error occurred (sanitized)";
   }
-  return message;
+  // Even for messages without sensitive keywords, we now always return the safe category string
+  // to guarantee no raw exception text is ever persisted.
+  return "An operational error occurred (sanitized)";
 }
 
 /** Sanitizes query parameters and request bodies to redact credentials, prompts, and contract text. */
@@ -94,8 +121,8 @@ export function sanitizeUrl(urlStr: string): string {
 
 /** Records a sanitized, deduplicated operational event without contract text or secrets. */
 export async function captureError(error: unknown, context: ErrorContext) {
-  let message = error instanceof Error ? error.message : "Unknown application error";
-  message = sanitizeErrorMessage(message).slice(0, 500);
+  // Never persist raw exception text. Store only an allow-listed error category.
+  const message = classifyError(error);
   const fingerprint = await sha256Hex(`${context.route}\n${message}`);
   const now = new Date().toISOString();
   try {

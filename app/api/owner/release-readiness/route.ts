@@ -17,12 +17,22 @@ export const GET = withMonitoring(async function GET(request: Request) {
   }
 
   // 2. Get migrations status (Non-authoritative schema capability check)
-  const migrationStatus = { applied: 0, total: 12, isCurrent: false, label: "Schema Capability Check" };
+  const migrationStatus = { applied: 0, total: 13, isCurrent: false, label: "Schema Capability Check" };
   try {
     const tables = await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all<{ name: string }>();
     const tableNames = tables.results.map((r) => r.name);
-    const hasLatest = tableNames.includes("notification_deliveries") && tableNames.includes("notification_preferences");
-    migrationStatus.applied = hasLatest ? 12 : 11;
+
+    let hasIdempotencyKey = false;
+    if (tableNames.includes("notification_deliveries")) {
+      const colInfo = await env.DB.prepare("PRAGMA table_info(notification_deliveries)").all<{ name: string }>();
+      hasIdempotencyKey = colInfo.results.some((col) => col.name === "idempotency_key");
+    }
+
+    const hasLatest = tableNames.includes("notification_deliveries") &&
+                      tableNames.includes("notification_preferences") &&
+                      hasIdempotencyKey;
+
+    migrationStatus.applied = hasLatest ? 13 : (tableNames.includes("notification_deliveries") ? 12 : 11);
     migrationStatus.isCurrent = hasLatest;
   } catch {
     // ignore

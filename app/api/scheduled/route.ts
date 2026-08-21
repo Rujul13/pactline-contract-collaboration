@@ -20,7 +20,7 @@ export async function GET() {
 
     return Response.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: msg }, { status: 500 });
+    console.error("Scheduled sweep error", err);
+    return Response.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }

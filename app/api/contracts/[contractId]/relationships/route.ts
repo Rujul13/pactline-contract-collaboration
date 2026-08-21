@@ -101,7 +101,7 @@ export const GET = withMonitoring(async function GET(request: Request, context: 
       successors: authorizedSuccessors
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return Response.json({ error: message }, { status: 500 });
+    console.error("Error fetching relationships", err);
+    return Response.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }, "/api/contracts/:contractId/relationships");

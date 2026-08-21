@@ -41,7 +41,7 @@ export const GET = withMonitoring(async function GET(request: Request) {
     }));
     return Response.json({ errors: parsedErrors });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return Response.json({ error: message }, { status: 500 });
+    console.error("Error fetching monitoring errors", err);
+    return Response.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }, "/api/owner/monitoring/errors");

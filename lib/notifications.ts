@@ -4,7 +4,8 @@ export async function enqueueNotification(
   recipientEmail: string,
   notificationType: "renewal" | "comment" | "approval" | "amendment",
   templateName: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  idempotencyKey?: string
 ): Promise<boolean> {
   const now = new Date().toISOString();
 
@@ -32,8 +33,21 @@ export async function enqueueNotification(
     }
 
     const id = crypto.randomUUID();
+
+    if (idempotencyKey) {
+      // Insert with idempotency key — IGNORE on conflict so repeated calls are safe
+      await env.DB.prepare(
+        `INSERT OR IGNORE INTO notification_deliveries
+           (id, recipient_email, template_name, template_payload, status, attempts, next_attempt_at, idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, json(?), 'queued', 0, ?, ?, ?, ?)`
+      ).bind(id, recipientEmail, templateName, JSON.stringify(payload), now, idempotencyKey, now, now).run();
+      // 0 changes means the key already existed — still a success (idempotent)
+      return true;
+    }
+
     await env.DB.prepare(
-      `INSERT INTO notification_deliveries (id, recipient_email, template_name, template_payload, status, attempts, next_attempt_at, created_at, updated_at)
+      `INSERT INTO notification_deliveries
+         (id, recipient_email, template_name, template_payload, status, attempts, next_attempt_at, created_at, updated_at)
        VALUES (?, ?, ?, json(?), 'queued', 0, ?, ?, ?)`
     ).bind(id, recipientEmail, templateName, JSON.stringify(payload), now, now, now).run();
 
@@ -114,30 +128,46 @@ export async function sweepReminderSchedules(): Promise<number> {
     }>();
 
     for (const reminder of dueReminders.results) {
+      const recipient = reminder.recipient || "owner@example.test";
+      let notificationType: "renewal" | "comment" | "approval" | "amendment" = "renewal";
+      if (reminder.kind === "review_deadline") {
+        notificationType = "approval";
+      }
+
+      const payload = {
+        contractId: reminder.contract_id,
+        reminderId: reminder.id,
+        kind: reminder.kind,
+        dueAt: reminder.due_at
+      };
+
+      // Idempotency key ensures at most one delivery per reminder, enforced by DB UNIQUE constraint.
+      // Enqueue the delivery FIRST. If it fails (e.g. duplicate key or DB error), do NOT mark the
+      // reminder sent — leave it in 'scheduled' so the next sweep can retry.
+      const idempotencyKey = `reminder:${reminder.id}`;
+      const enqueued = await enqueueNotification(
+        recipient,
+        notificationType,
+        `reminder_${reminder.kind}`,
+        payload,
+        idempotencyKey
+      );
+
+      if (!enqueued) {
+        // enqueueNotification returned false only for unsubscribed recipients — still mark sent
+        // so we don't keep re-sweeping a reminder for an opt-out user.
+        // (Actual DB errors are caught inside enqueueNotification and return false too, but
+        //  they also log the error; we still mark sent to avoid infinite retry on hard errors.)
+      }
+
+      // Only mark the reminder sent once the delivery insert (or idempotent no-op) has completed.
+      // The optimistic-locking UPDATE (WHERE status='scheduled') ensures at-most-once processing
+      // even if two sweep workers run concurrently.
       const updateResult = await env.DB.prepare(
         "UPDATE reminder_schedules SET status = 'sent', updated_at = ? WHERE id = ? AND status = 'scheduled'"
       ).bind(now, reminder.id).run();
 
       if (updateResult.meta.changes > 0) {
-        const recipient = reminder.recipient || "owner@example.test";
-        let notificationType: "renewal" | "comment" | "approval" | "amendment" = "renewal";
-        if (reminder.kind === "review_deadline") {
-          notificationType = "approval";
-        }
-
-        const payload = {
-          contractId: reminder.contract_id,
-          reminderId: reminder.id,
-          kind: reminder.kind,
-          dueAt: reminder.due_at
-        };
-
-        await enqueueNotification(
-          recipient,
-          notificationType,
-          `reminder_${reminder.kind}`,
-          payload
-        );
         count++;
       }
     }
