@@ -170,13 +170,13 @@ export async function POST(request: Request, context: { params: Promise<{ contra
         ).bind(displayName, titleRole, now, approver.id).run();
       }
 
-      // Check if duplicate pending assignment exists for active version and kind
+      // Check if duplicate pending assignment exists for active version, approver, and kind
       const duplicate = await env.DB.prepare(
-        "SELECT id FROM approval_assignments WHERE contract_id = ? AND version_number=? AND kind = ? AND status = 'pending'"
-      ).bind(contractId, contract.current_version, kind).first();
+        "SELECT id FROM approval_assignments WHERE contract_id = ? AND version_number=? AND delegated_approver_id = ? AND kind = ? AND status = 'pending'"
+      ).bind(contractId, contract.current_version, approver.id, kind).first();
 
       if (duplicate) {
-        return Response.json({ error: "An approval assignment for this kind and version is already pending" }, { status: 409 });
+        return Response.json({ error: "This approver is already assigned to this approval kind for the active version" }, { status: 409 });
       }
 
       // 2. Create approval_assignments row

@@ -37,6 +37,157 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
     await reviewerContext.dispose();
   });
 
+  test("multiple approvers of the same approval kind are supported per version", async ({ playwright }) => {
+    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    // Assign Legal Approver A
+    const resA = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "legal.counsel.a@company.test",
+        displayName: "Legal Counsel A",
+        titleRole: "Senior Counsel",
+        kind: "legal",
+        required: true,
+      },
+    });
+    expect(resA.status()).toBe(201);
+
+    // Assign Legal Approver B (Same kind: "legal")
+    const resB = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "legal.counsel.b@company.test",
+        displayName: "Legal Counsel B",
+        titleRole: "Associate Counsel",
+        kind: "legal",
+        required: true,
+      },
+    });
+    expect(resB.status()).toBe(201);
+
+    // Re-assigning Legal Approver A to the same kind again returns 409 Conflict
+    const resDuplicate = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "legal.counsel.a@company.test",
+        displayName: "Legal Counsel A",
+        titleRole: "Senior Counsel",
+        kind: "legal",
+        required: true,
+      },
+    });
+    expect(resDuplicate.status()).toBe(409);
+
+    await ownerContext.dispose();
+  });
+
+  test("AI replacement and AI clause addition invalidate delegated approvals into pending state for new version", async ({ playwright }) => {
+    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    // Step 1: Assign delegated approver for v1
+    const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "finance.lead@company.test",
+        displayName: "Finance Lead",
+        titleRole: "VP Finance",
+        kind: "finance",
+        required: true,
+      },
+    });
+    expect(assignRes.status()).toBe(201);
+    const assignData = (await assignRes.json()) as { assignment: { id: string; inviteUrl: string } };
+    const inviteToken = new URL(assignData.assignment.inviteUrl).searchParams.get("token")!;
+
+    // Step 2: Approver approves v1
+    const approverContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    await approverContext.post("/api/approver/invite/consume", { data: { token: inviteToken } });
+    const decideRes = await approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+      data: { assignmentId: assignData.assignment.id, decision: "approved", decisionReason: "Finance terms approved for v1." },
+    });
+    expect(decideRes.ok()).toBe(true);
+
+    // Step 3: Owner applies AI clause addition (operation: "insert_clause") -> increments to v2
+    const aiInsertRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/ai-suggestions/apply`, {
+      data: {
+        baseVersion: 1,
+        operation: "insert_clause",
+        heading: "7. AI Governance Clause",
+        paragraphs: ["All artificial intelligence operations shall comply with 2026 data privacy regulations."],
+      },
+    });
+    expect(aiInsertRes.ok()).toBe(true);
+    const aiInsertData = (await aiInsertRes.json()) as { versionNumber: number };
+    expect(aiInsertData.versionNumber).toBe(2);
+
+    // Step 4: Verify delegated assignment for v2 is instantiated in pending state
+    const approverV2Res = await approverContext.get(`/api/approver/contracts/${DEMO_CONTRACT_ID}`);
+    expect(approverV2Res.ok()).toBe(true);
+    const v2Data = (await approverV2Res.json()) as { assignment: { version_number: number; status: string } };
+    expect(v2Data.assignment.version_number).toBe(2);
+    expect(v2Data.assignment.status).toBe("pending");
+
+    await ownerContext.dispose();
+    await approverContext.dispose();
+  });
+
+  test("counterparty agreement and locking path is blocked when a required delegated approval is pending or edits_requested", async ({ playwright }) => {
+    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    // Step 1: Owner assigns required delegated legal approver for v1
+    const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "legal.gate@company.test",
+        displayName: "Legal Gatekeeper",
+        titleRole: "General Counsel",
+        kind: "legal",
+        required: true,
+      },
+    });
+    expect(assignRes.status()).toBe(201);
+    const assignData = (await assignRes.json()) as { assignment: { id: string; inviteUrl: string } };
+    const inviteToken = new URL(assignData.assignment.inviteUrl).searchParams.get("token")!;
+
+    // Step 2: Counterparty logs in and attempts to agree via portal while delegated approval is pending
+    const reviewerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    const loginRes = await reviewerContext.post("/api/client/login", {
+      data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD },
+    });
+    expect(loginRes.ok()).toBe(true);
+
+    // Counterparty agree attempt — succeeds for counterparty but does NOT lock contract due to pending required delegated approval
+    const counterpartyAgreeRes = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/agree`);
+    expect(counterpartyAgreeRes.ok()).toBe(true);
+    const counterpartyAgreeData = (await counterpartyAgreeRes.json()) as { agreed: boolean; locked: boolean };
+    expect(counterpartyAgreeData.agreed).toBe(true);
+    expect(counterpartyAgreeData.locked).toBe(false);
+
+    // Owner agree attempt while delegated approval is pending -> returns 409 Conflict
+    const ownerAgreeFailRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/agree`);
+    expect(ownerAgreeFailRes.status()).toBe(409);
+
+    // Step 3: Delegated Approver approves v1
+    const approverContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    await approverContext.post("/api/approver/invite/consume", { data: { token: inviteToken } });
+    const decideRes = await approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+      data: { assignmentId: assignData.assignment.id, decision: "approved", decisionReason: "Legal terms fully verified and approved." },
+    });
+    expect(decideRes.ok()).toBe(true);
+
+    // Step 4: Owner agrees after delegated approval is approved — both parties have agreed, locking contract
+    const ownerAgreeRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/agree`);
+    expect(ownerAgreeRes.ok()).toBe(true);
+    const ownerAgreeData = (await ownerAgreeRes.json()) as { agreed: boolean; locked: boolean };
+    expect(ownerAgreeData.agreed).toBe(true);
+    expect(ownerAgreeData.locked).toBe(true);
+
+    await ownerContext.dispose();
+    await reviewerContext.dispose();
+    await approverContext.dispose();
+  });
+
   test("hostile Host-header is rejected and invite URL always uses configured canonical app URL", async ({ playwright }) => {
     const ownerContext = await playwright.request.newContext({
       baseURL: BASE_URL,

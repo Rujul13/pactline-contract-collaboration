@@ -82,9 +82,12 @@ export async function recordCounterpartyAgreement(contractId: string, session: {
   if ((agreementCount?.total ?? 0) < 2) return { agreed: true, locked: false, versionNumber: contract.current_version };
   const incompleteApprovals = await db.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
   if ((incompleteApprovals?.total ?? 0) > 0) return { agreed: true, locked: false, approvalPending: true, versionNumber: contract.current_version };
+  const incompleteDelegated = await db.prepare("SELECT COUNT(*) AS total FROM approval_assignments WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+  if ((incompleteDelegated?.total ?? 0) > 0) return { agreed: true, locked: false, approvalPending: true, versionNumber: contract.current_version };
+
   const now = new Date().toISOString();
   const lockGuard = mutationGuard(
-    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND NOT EXISTS (SELECT 1 FROM approval_assignments aa WHERE aa.contract_id=c.id AND aa.version_number=c.current_version AND aa.required=1 AND aa.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
     [contractId, contract.current_version],
   );
   try {
