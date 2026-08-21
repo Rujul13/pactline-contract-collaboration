@@ -330,8 +330,8 @@ test.describe("Operations and Diagnostics E2E", () => {
     await page.goto("/owner/release-dashboard");
 
     // Check that Notification Queue Log has our test delivery and shows "Logged — local stub"
-    await expect(page.locator("text=sweep-test@example.test")).toBeVisible();
-    await expect(page.locator("text=Logged — local stub")).toBeVisible();
+    await expect(page.locator("text=sweep-test@example.test").first()).toBeVisible();
+    await expect(page.locator("text=Logged — local stub").first()).toBeVisible();
   });
 
   test("notification idempotency key enforced at DB level — repeated inserts create only one delivery", async () => {
@@ -472,6 +472,74 @@ test.describe("Operations and Diagnostics E2E", () => {
       expect(reminder?.status).toBe("sent");
     } finally {
       db2.close();
+    }
+  });
+
+  test("reminder stays scheduled when delivery enqueue fails due to database failure, and succeeds on retry", async ({ playwright }) => {
+    const db = getDatabase();
+    const reminderId = "test-db-fail-reminder-4";
+    const dueAt = new Date(Date.now() - 10000).toISOString();
+    const idemKey = `reminder:${reminderId}`;
+
+    try {
+      db.prepare("DELETE FROM reminder_schedules WHERE id = ?").run(reminderId);
+      db.prepare("DELETE FROM notification_deliveries WHERE idempotency_key = ?").run(idemKey);
+
+      // Insert the reminder as scheduled
+      db.prepare(`
+        INSERT INTO reminder_schedules (id, contract_id, kind, channel, due_at, recipient, status, created_at, updated_at)
+        VALUES (?, ?, 'review_deadline', 'in_app', ?, 'db-fail-test@example.test', 'scheduled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(reminderId, DEMO_CONTRACT_ID, dueAt);
+
+      // Simulate database failure by renaming the notification_deliveries table temporarily
+      db.exec("ALTER TABLE notification_deliveries RENAME TO notification_deliveries_temp");
+    } finally {
+      db.close();
+    }
+
+    const schedulerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    try {
+      // Trigger sweep: this must return success response but internal sweep fails for this reminder (logs error)
+      const res = await schedulerContext.get("/__scheduled");
+      expect(res.ok()).toBe(true);
+    } finally {
+      // Restore the table name immediately so subsequent tests and processes don't break
+      const dbRestore = getDatabase();
+      try {
+        dbRestore.exec("ALTER TABLE notification_deliveries_temp RENAME TO notification_deliveries");
+      } finally {
+        dbRestore.close();
+      }
+    }
+
+    // Verify reminder is still scheduled, and no delivery exists
+    const dbVerify = getDatabase();
+    try {
+      const reminder = dbVerify.prepare("SELECT status FROM reminder_schedules WHERE id = ?").get(reminderId) as { status: string } | undefined;
+      expect(reminder?.status).toBe("scheduled");
+
+      const deliveries = dbVerify.prepare("SELECT * FROM notification_deliveries WHERE idempotency_key = ?").all(idemKey);
+      expect(deliveries.length).toBe(0);
+    } finally {
+      dbVerify.close();
+    }
+
+    // Trigger sweep again: now the database is restored and it should succeed
+    const res2 = await schedulerContext.get("/__scheduled");
+    expect(res2.ok()).toBe(true);
+    await schedulerContext.dispose();
+
+    // Verify reminder is now sent, and exactly one delivery exists
+    const dbVerify2 = getDatabase();
+    try {
+      const reminder = dbVerify2.prepare("SELECT status FROM reminder_schedules WHERE id = ?").get(reminderId) as { status: string } | undefined;
+      expect(reminder?.status).toBe("sent");
+
+      const deliveries = dbVerify2.prepare("SELECT * FROM notification_deliveries WHERE idempotency_key = ?").all(idemKey);
+      expect(deliveries.length).toBe(1);
+    } finally {
+      dbVerify2.close();
     }
   });
 

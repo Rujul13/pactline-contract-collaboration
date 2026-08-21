@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { classifyError } from "./monitoring";
 
 export async function enqueueNotification(
   recipientEmail: string,
@@ -6,7 +7,7 @@ export async function enqueueNotification(
   templateName: string,
   payload: Record<string, unknown>,
   idempotencyKey?: string
-): Promise<boolean> {
+): Promise<"created" | "idempotent" | "opt_out" | "failure"> {
   const now = new Date().toISOString();
 
   try {
@@ -17,7 +18,7 @@ export async function enqueueNotification(
       ).bind(user.id, notificationType).first<{ unsubscribed: boolean }>();
       if (pref?.unsubscribed) {
         console.log(`Notification skipped for ${recipientEmail} due to unsubscribe (type: ${notificationType})`);
-        return false;
+        return "opt_out";
       }
     }
 
@@ -28,7 +29,7 @@ export async function enqueueNotification(
       ).bind(portalAccount.id, notificationType).first<{ unsubscribed: boolean }>();
       if (pref?.unsubscribed) {
         console.log(`Notification skipped for ${recipientEmail} due to unsubscribe (type: ${notificationType})`);
-        return false;
+        return "opt_out";
       }
     }
 
@@ -36,13 +37,16 @@ export async function enqueueNotification(
 
     if (idempotencyKey) {
       // Insert with idempotency key — IGNORE on conflict so repeated calls are safe
-      await env.DB.prepare(
+      const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO notification_deliveries
            (id, recipient_email, template_name, template_payload, status, attempts, next_attempt_at, idempotency_key, created_at, updated_at)
          VALUES (?, ?, ?, json(?), 'queued', 0, ?, ?, ?, ?)`
       ).bind(id, recipientEmail, templateName, JSON.stringify(payload), now, idempotencyKey, now, now).run();
       // 0 changes means the key already existed — still a success (idempotent)
-      return true;
+      if (result.meta && result.meta.changes === 0) {
+        return "idempotent";
+      }
+      return "created";
     }
 
     await env.DB.prepare(
@@ -51,10 +55,10 @@ export async function enqueueNotification(
        VALUES (?, ?, ?, json(?), 'queued', 0, ?, ?, ?)`
     ).bind(id, recipientEmail, templateName, JSON.stringify(payload), now, now, now).run();
 
-    return true;
+    return "created";
   } catch (err) {
     console.error("Failed to enqueue notification", err);
-    return false;
+    return "failure";
   }
 }
 
@@ -92,7 +96,7 @@ export async function processNotificationQueue(): Promise<{ processed: number; f
 
         processed++;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
+        const message = classifyError(err);
         const backoffSeconds = Math.pow(2, attempts) * 30;
         const nextAttempt = new Date(Date.now() + backoffSeconds * 1000).toISOString();
 
@@ -142,10 +146,10 @@ export async function sweepReminderSchedules(): Promise<number> {
       };
 
       // Idempotency key ensures at most one delivery per reminder, enforced by DB UNIQUE constraint.
-      // Enqueue the delivery FIRST. If it fails (e.g. duplicate key or DB error), do NOT mark the
+      // Enqueue the delivery FIRST. If it fails (e.g. DB error), do NOT mark the
       // reminder sent — leave it in 'scheduled' so the next sweep can retry.
       const idempotencyKey = `reminder:${reminder.id}`;
-      const enqueued = await enqueueNotification(
+      const outcome = await enqueueNotification(
         recipient,
         notificationType,
         `reminder_${reminder.kind}`,
@@ -153,22 +157,18 @@ export async function sweepReminderSchedules(): Promise<number> {
         idempotencyKey
       );
 
-      if (!enqueued) {
-        // enqueueNotification returned false only for unsubscribed recipients — still mark sent
-        // so we don't keep re-sweeping a reminder for an opt-out user.
-        // (Actual DB errors are caught inside enqueueNotification and return false too, but
-        //  they also log the error; we still mark sent to avoid infinite retry on hard errors.)
-      }
+      // Only mark the reminder sent once the delivery insert (or idempotent no-op) has completed,
+      // or if the recipient intentionally opted out of these notifications.
+      if (outcome === "created" || outcome === "idempotent" || outcome === "opt_out") {
+        const updateResult = await env.DB.prepare(
+          "UPDATE reminder_schedules SET status = 'sent', updated_at = ? WHERE id = ? AND status = 'scheduled'"
+        ).bind(now, reminder.id).run();
 
-      // Only mark the reminder sent once the delivery insert (or idempotent no-op) has completed.
-      // The optimistic-locking UPDATE (WHERE status='scheduled') ensures at-most-once processing
-      // even if two sweep workers run concurrently.
-      const updateResult = await env.DB.prepare(
-        "UPDATE reminder_schedules SET status = 'sent', updated_at = ? WHERE id = ? AND status = 'scheduled'"
-      ).bind(now, reminder.id).run();
-
-      if (updateResult.meta.changes > 0) {
-        count++;
+        if (updateResult.meta.changes > 0) {
+          count++;
+        }
+      } else {
+        console.error(`Failed to sweep reminder ${reminder.id} due to database error (outcome: ${outcome}); leaving scheduled for retry.`);
       }
     }
   } catch (err) {

@@ -48,9 +48,8 @@ export const GET = withMonitoring(async function GET(request: Request) {
       } else {
         r2Health = { status: "available", reachable: true, details: "binding available, dummy object absent" };
       }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      r2Health = { status: "error", reachable: false, details: `probe failed: ${errMsg}` };
+    } catch {
+      r2Health = { status: "error", reachable: false, details: "probe failed" };
     }
   }
 

@@ -458,9 +458,11 @@ export const notificationDeliveries = sqliteTable("notification_deliveries", {
   attempts: integer("attempts").notNull().default(0),
   nextAttemptAt: text("next_attempt_at"),
   lastError: text("last_error"),
+  idempotencyKey: text("idempotency_key"),
   ...timestamps,
 }, (table) => [
   index("idx_notification_deliveries_status_next").on(table.status, table.nextAttemptAt),
+  uniqueIndex("idx_notification_idempotency_key").on(table.idempotencyKey),
 ]);
 
 export const notificationPreferences = sqliteTable("notification_preferences", {
