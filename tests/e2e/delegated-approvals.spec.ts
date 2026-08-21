@@ -1,0 +1,153 @@
+import { expect, test } from "@playwright/test";
+import { BASE_URL } from "../../playwright.config";
+import { resetDemo, DEMO_CONTRACT_ID, REVIEWER_USERNAME, REVIEWER_PASSWORD } from "./fixtures";
+
+test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
+  test.beforeEach(async () => {
+    await resetDemo();
+  });
+
+  test("unauthorized and cross-role requests are gated with 401/403", async ({ playwright }) => {
+    const unauthContext = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    // 1. Unauthenticated request to owner assignment endpoint
+    const assignRes = await unauthContext.post(`/api/owner/contracts/${DEMO_CONTRACT_ID}/approvers`, {
+      data: { email: "legal@test.test", displayName: "Legal", titleRole: "Counsel", kind: "legal" },
+    });
+    expect([401, 403, 404]).toContain(assignRes.status());
+
+    // 2. Consume invalid invite token
+    const invalidConsumeRes = await unauthContext.post("/api/approver/invite/consume", {
+      data: { token: "invalid-token-hash-12345" },
+    });
+    expect(invalidConsumeRes.status()).toBe(410);
+
+    // 3. Reviewer session receives 403 on owner assignment endpoint
+    const reviewerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    await reviewerContext.post("/api/client/login", {
+      data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD },
+    });
+
+    const reviewerAssignRes = await reviewerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: { action: "assign_delegated", email: "legal@test.test", displayName: "Legal", titleRole: "Counsel", kind: "legal" },
+    });
+    expect([401, 403]).toContain(reviewerAssignRes.status());
+
+    await unauthContext.dispose();
+    await reviewerContext.dispose();
+  });
+
+  test("full delegated approval lifecycle, two-step invite, version invalidation, and server gate enforcement", async ({ page, playwright }) => {
+    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    // Step 1: Owner assigns Delegated Legal Approver for active version (v1)
+    const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "sarah.jenkins@company.test",
+        displayName: "Sarah Jenkins",
+        titleRole: "VP of Legal",
+        kind: "legal",
+        required: true,
+      },
+    });
+    expect(assignRes.status()).toBe(201);
+    const assignData = (await assignRes.json()) as {
+      assignment: { id: string; versionNumber: number; inviteUrl: string; approver: { id: string } };
+    };
+    expect(assignData.assignment.versionNumber).toBe(1);
+    expect(assignData.assignment.inviteUrl).toContain("/approve/invite?token=");
+
+    const inviteToken = new URL(assignData.assignment.inviteUrl).searchParams.get("token")!;
+    expect(inviteToken).toBeTruthy();
+
+    // Step 2: GET Probe Endpoint (Read-only GET landing verification without consuming token)
+    const probeRes = await ownerContext.get(`/api/approver/invite/probe?token=${encodeURIComponent(inviteToken)}`);
+    expect(probeRes.ok()).toBe(true);
+    const probeData = (await probeRes.json()) as { approverName: string; kind: string; versionNumber: number };
+    expect(probeData.approverName).toBe("Sarah Jenkins");
+    expect(probeData.kind).toBe("legal");
+    expect(probeData.versionNumber).toBe(1);
+
+    // Step 3: Two-step GET landing page display in browser
+    await page.goto(`${BASE_URL}/approve/invite?token=${inviteToken}`);
+    await expect(page.locator("h1")).toContainText("Pactline Approval Portal");
+    await expect(page.locator("body")).toContainText("Sarah Jenkins");
+    await expect(page.locator("body")).toContainText("VP of Legal");
+
+    // Step 4: POST Consume Invite Link
+    const approverContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    const consumeRes = await approverContext.post("/api/approver/invite/consume", {
+      data: { token: inviteToken },
+    });
+    expect(consumeRes.ok()).toBe(true);
+    const consumeData = (await consumeRes.json()) as { success: boolean; contractId: string };
+    expect(consumeData.success).toBe(true);
+    expect(consumeData.contractId).toBe(DEMO_CONTRACT_ID);
+
+    // Step 5: Submitting decision without mandatory rationale (<5 chars) returns 400
+    const shortReasonRes = await approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+      data: { assignmentId: assignData.assignment.id, decision: "edits_requested", decisionReason: "No" },
+    });
+    expect(shortReasonRes.status()).toBe(400);
+
+    // Step 6: Approver requests edits with valid rationale (min 5 chars)
+    const decideRes = await approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+      data: {
+        assignmentId: assignData.assignment.id,
+        decision: "edits_requested",
+        decisionReason: "Legal terms require clause 4 revision for compliance.",
+      },
+    });
+    expect(decideRes.ok()).toBe(true);
+
+    // Step 7: Server Gate Enforcement — Owner agreement fails while delegated approval is in edits_requested (409 Conflict)
+    const agreeFailRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/agree`);
+    expect(agreeFailRes.status()).toBe(409);
+
+    // Step 8: Owner updates contract paragraph text, incrementing version to v2
+    const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+    const workspaceData = (await workspaceRes.json()) as { blocks: Array<{ id: string; current_text: string }> };
+    const targetBlock = workspaceData.blocks.find((b) => b.id) || workspaceData.blocks[0];
+
+    const blockUpdateRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/blocks/${targetBlock.id}`, {
+      data: {
+        baseVersion: 1,
+        text: targetBlock.current_text + " (Updated for Phase 3 E2E test)",
+      },
+    });
+    expect(blockUpdateRes.ok()).toBe(true);
+    const updateData = (await blockUpdateRes.json()) as { versionNumber: number };
+    expect(updateData.versionNumber).toBe(2);
+
+    // Step 9: Atomic Version Invalidation Verification — Approver loads contract workspace for v2
+    const approverContractRes = await approverContext.get(`/api/approver/contracts/${DEMO_CONTRACT_ID}`);
+    expect(approverContractRes.ok()).toBe(true);
+    const approverContractData = (await approverContractRes.json()) as {
+      contract: { current_version: number };
+      assignment: { id: string; version_number: number; status: string };
+    };
+    expect(approverContractData.contract.current_version).toBe(2);
+    expect(approverContractData.assignment.version_number).toBe(2);
+    expect(approverContractData.assignment.status).toBe("pending");
+
+    // Step 10: Approver approves version 2 with mandatory rationale
+    const approveV2Res = await approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+      data: {
+        assignmentId: approverContractData.assignment.id,
+        decision: "approved",
+        decisionReason: "Version 2 legal terms fully compliant with 2026 corporate policy.",
+      },
+    });
+    expect(approveV2Res.ok()).toBe(true);
+
+    // Step 11: Owner Agreement Gate Unlocked — Required approval is now approved
+    const agreeSuccessRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/agree`);
+    expect(agreeSuccessRes.ok()).toBe(true);
+    const agreeSuccessData = (await agreeSuccessRes.json()) as { agreed: boolean };
+    expect(agreeSuccessData.agreed).toBe(true);
+
+    await ownerContext.dispose();
+    await approverContext.dispose();
+  });
+});

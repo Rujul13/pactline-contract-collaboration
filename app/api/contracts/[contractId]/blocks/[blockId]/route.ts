@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
 import { sha256Hex } from "@/lib/security";
 import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
+import { instantiateNextVersionApprovals } from "@/lib/approver-auth";
 
 export async function POST(request: Request, context: { params: Promise<{ contractId: string; blockId: string }> }) {
   const auth = await requireOwnerApi(request);
@@ -29,6 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     env.DB.prepare("UPDATE contracts SET current_version=?, status='negotiating', updated_at=? WHERE id=? AND current_version=?").bind(nextVersion, now, contractId, row.current_version),
     env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, before_hash, after_hash, request_id, metadata, created_at) VALUES (?, ?, ?, 'Contract Owner', 'paragraph.updated', 'document_block', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, blockId, nextVersion, await sha256Hex(row.current_text), afterHash, crypto.randomUUID(), JSON.stringify({ previousVersion: row.current_version }), now),
     ]);
+    await instantiateNextVersionApprovals(contractId, row.current_version, nextVersion, now);
   } catch (error) {
     if (error instanceof MutationConflictError) return Response.json({ error: "The update conflicted with another change" }, { status: 409 });
     throw error;

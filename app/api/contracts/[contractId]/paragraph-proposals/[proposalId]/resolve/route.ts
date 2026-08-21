@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
 import { sha256Hex } from "@/lib/security";
 import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
+import { instantiateNextVersionApprovals } from "@/lib/approver-auth";
 
 type ProposalRow = { id: string; block_id: string; base_version: number; original_text: string; proposed_text: string; status: string; current_text: string; current_version: number; contract_status: string };
 
@@ -67,6 +68,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
     env.DB.prepare("UPDATE paragraph_proposals SET base_version=?, updated_at=? WHERE contract_id=? AND status='pending' AND EXISTS (SELECT 1 FROM document_blocks b WHERE b.id=paragraph_proposals.block_id AND b.current_text=paragraph_proposals.original_text)").bind(nextVersion, now, contractId),
     env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, before_hash, after_hash, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'paragraph_proposal.accepted', 'paragraph_proposal', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, user.displayName, proposalId, nextVersion, beforeHash, afterHash, requestId, JSON.stringify({ previousVersion: proposal.current_version, blockId: proposal.block_id, reason }), now),
     ]);
+    await instantiateNextVersionApprovals(contractId, proposal.current_version, nextVersion, now);
   } catch (error) {
     if (error instanceof MutationConflictError) return Response.json({ error: "Acceptance conflicted with another request" }, { status: 409 });
     throw error;

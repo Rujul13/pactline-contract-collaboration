@@ -19,6 +19,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ contr
     if ((pending?.total ?? 0) > 0) return Response.json({ error: "Resolve every pending proposal before marking the contract approved" }, { status: 409 });
     const incompleteApprovals = await env.DB.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
     if ((incompleteApprovals?.total ?? 0) > 0) return Response.json({ error: "Complete every required approval before marking the contract approved" }, { status: 409 });
+    const incompleteDelegated = await env.DB.prepare("SELECT COUNT(*) AS total FROM approval_assignments WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+    if ((incompleteDelegated?.total ?? 0) > 0) return Response.json({ error: "Complete every required delegated approval before marking the contract approved" }, { status: 409 });
   }
   if (stage === "executed" && contract.status !== "locked") return Response.json({ error: "Lock the agreed document before marking it executed" }, { status: 409 });
   const noticePeriodDays = Math.max(0, Math.min(3650, Number(body.noticePeriodDays ?? contract.notice_period_days ?? 30)));
