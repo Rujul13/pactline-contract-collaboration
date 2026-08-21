@@ -97,3 +97,52 @@ export async function processNotificationQueue(): Promise<{ processed: number; f
 
   return { processed, failed };
 }
+
+export async function sweepReminderSchedules(): Promise<number> {
+  const now = new Date().toISOString();
+  let count = 0;
+  try {
+    const dueReminders = await env.DB.prepare(
+      "SELECT * FROM reminder_schedules WHERE status = 'scheduled' AND due_at <= ?"
+    ).bind(now).all<{
+      id: string;
+      contract_id: string;
+      kind: "review_deadline" | "notice_window" | "renewal" | "expiration";
+      channel: string;
+      due_at: string;
+      recipient: string | null;
+    }>();
+
+    for (const reminder of dueReminders.results) {
+      const updateResult = await env.DB.prepare(
+        "UPDATE reminder_schedules SET status = 'sent', updated_at = ? WHERE id = ? AND status = 'scheduled'"
+      ).bind(now, reminder.id).run();
+
+      if (updateResult.meta.changes > 0) {
+        const recipient = reminder.recipient || "owner@example.test";
+        let notificationType: "renewal" | "comment" | "approval" | "amendment" = "renewal";
+        if (reminder.kind === "review_deadline") {
+          notificationType = "approval";
+        }
+
+        const payload = {
+          contractId: reminder.contract_id,
+          reminderId: reminder.id,
+          kind: reminder.kind,
+          dueAt: reminder.due_at
+        };
+
+        await enqueueNotification(
+          recipient,
+          notificationType,
+          `reminder_${reminder.kind}`,
+          payload
+        );
+        count++;
+      }
+    }
+  } catch (err) {
+    console.error("Error sweeping reminder schedules", err);
+  }
+  return count;
+}

@@ -16,8 +16,8 @@ export const GET = withMonitoring(async function GET(request: Request) {
     d1Health = { status: "error", latencyMs: 0 };
   }
 
-  // 2. Get migrations status
-  const migrationStatus = { applied: 0, total: 12, isCurrent: false };
+  // 2. Get migrations status (Non-authoritative schema capability check)
+  const migrationStatus = { applied: 0, total: 12, isCurrent: false, label: "Schema Capability Check" };
   try {
     const tables = await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all<{ name: string }>();
     const tableNames = tables.results.map((r) => r.name);
@@ -29,13 +29,18 @@ export const GET = withMonitoring(async function GET(request: Request) {
   }
 
   // 3. R2 health check (head dummy file)
-  let r2Health = { status: "unavailable", reachable: false };
+  let r2Health = { status: "unavailable", reachable: false, details: "binding missing" };
   if (env.DOCUMENTS) {
     try {
-      await env.DOCUMENTS.head(".system_health_check_dummy");
-      r2Health = { status: "available", reachable: true };
-    } catch {
-      r2Health = { status: "available", reachable: true };
+      const res = await env.DOCUMENTS.head(".system_health_check_dummy");
+      if (res !== null) {
+        r2Health = { status: "available", reachable: true, details: "dummy object present" };
+      } else {
+        r2Health = { status: "available", reachable: true, details: "binding available, dummy object absent" };
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      r2Health = { status: "error", reachable: false, details: `probe failed: ${errMsg}` };
     }
   }
 
@@ -73,6 +78,25 @@ export const GET = withMonitoring(async function GET(request: Request) {
     env: process.env.NODE_ENV || "development"
   };
 
+  // 9. Recent notification deliveries
+  let notifications: Array<{ id: string; recipient_email: string; template_name: string; status: string; created_at: string }> = [];
+  try {
+    const result = await env.DB.prepare(
+      "SELECT id, recipient_email, template_name, status, created_at FROM notification_deliveries ORDER BY created_at DESC LIMIT 50"
+    ).all<{
+      id: string;
+      recipient_email: string;
+      template_name: string;
+      status: string;
+      created_at: string;
+    }>();
+    if (result) {
+      notifications = result.results;
+    }
+  } catch {
+    // ignore
+  }
+
   return Response.json({
     d1: d1Health,
     migrations: migrationStatus,
@@ -81,6 +105,7 @@ export const GET = withMonitoring(async function GET(request: Request) {
     ai: aiHealth,
     lastCronRun,
     unresolvedErrorsCount,
-    buildIdentity
+    buildIdentity,
+    notifications
   });
 }, "/api/owner/release-readiness");

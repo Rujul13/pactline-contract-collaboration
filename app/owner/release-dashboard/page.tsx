@@ -7,12 +7,13 @@ import { useRouter } from "next/navigation";
 type Diagnostics = {
   d1: { status: string; latencyMs: number };
   migrations: { applied: number; total: number; isCurrent: boolean };
-  r2: { status: string; reachable: boolean };
+  r2: { status: string; reachable: boolean; details?: string };
   vectorize: { status: string };
   ai: { status: string };
   lastCronRun: string;
   unresolvedErrorsCount: number;
   buildIdentity: { commitSha: string; env: string };
+  notifications?: Array<{ id: string; recipient_email: string; template_name: string; status: string; created_at: string }>;
 };
 
 type ErrorEvent = {
@@ -169,15 +170,16 @@ export default function ReleaseDashboardPage() {
             </ul>
           </div>
 
-          {/* Card: Schema Migrations */}
+          {/* Card: Schema Capability Check */}
           <div className="workflow-card" style={{ padding: "1.5rem" }}>
-            <h2 style={{ fontSize: "1.1rem", marginBottom: "1rem" }}>Schema & Migrations</h2>
-            <div style={{ fontSize: "2rem", fontWeight: "bold", margin: "0.5rem 0" }}>
+            <h2 style={{ fontSize: "1.1rem", marginBottom: "1rem" }}>Schema Capability Check</h2>
+            <div style={{ fontSize: "2.5rem", fontWeight: "bold", margin: "0.5rem 0" }}>
               {diagnostics.migrations.applied} / {diagnostics.migrations.total}
             </div>
             <p style={{ margin: 0, color: diagnostics.migrations.isCurrent ? "green" : "orange", fontWeight: "bold" }}>
-              {diagnostics.migrations.isCurrent ? "✓ Schema up-to-date" : "⚠ Migration update required"}
+              {diagnostics.migrations.isCurrent ? "✓ Capabilities fully present" : "⚠ Incomplete capabilities"}
             </p>
+            <span style={{ fontSize: "0.8rem", color: "#666" }}>Non-authoritative schema check</span>
           </div>
 
           {/* Card: Scheduled Tasks */}
@@ -303,6 +305,62 @@ export default function ReleaseDashboardPage() {
           </section>
         )}
       </div>
+
+      {/* Notifications Queue Log Section */}
+      <section className="workflow-card" style={{ padding: "1.5rem", marginTop: "2rem" }}>
+        <h2 style={{ fontSize: "1.2rem", marginBottom: "1rem" }}>Notification Queue Log (Provider Stub)</h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {diagnostics.notifications && diagnostics.notifications.length ? (
+            diagnostics.notifications.map((notif) => {
+              let displayStatus = notif.status;
+              if (notif.status === "queued") displayStatus = "Queued — local stub";
+              else if (notif.status === "logged") displayStatus = "Logged — local stub";
+              else if (notif.status === "failed") displayStatus = "Failed — local stub";
+
+              return (
+                <div
+                  key={notif.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "0.75rem 1rem",
+                    border: "1px solid #eee",
+                    borderRadius: "4px",
+                    background: "#fafafa"
+                  }}
+                >
+                  <div>
+                    <strong>{notif.recipient_email}</strong>
+                    <span style={{ color: "#666", marginLeft: "1rem", fontSize: "0.85rem" }}>
+                      Template: <code>{notif.template_name}</code>
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    <span
+                      style={{
+                        padding: "3px 8px",
+                        borderRadius: "12px",
+                        fontSize: "0.75rem",
+                        fontWeight: "bold",
+                        background: notif.status === "logged" ? "#e6f4ea" : "#fef7e0",
+                        color: notif.status === "logged" ? "#137333" : "#b06000"
+                      }}
+                    >
+                      {displayStatus}
+                    </span>
+                    <small style={{ color: "#888" }}>
+                      {new Date(notif.created_at).toLocaleString()}
+                    </small>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="workflow-empty">No notification deliveries recorded in queue.</div>
+          )}
+        </div>
+      </section>
     </main>
   );
 }

@@ -11,6 +11,54 @@ type ErrorContext = {
   metadata?: Record<string, unknown>;
 };
 
+export function shouldRedact(key: string): boolean {
+  const lower = key.toLowerCase();
+
+  // 1. Redact Authorization, Proxy-Authorization, X-API-Key
+  if (lower === "authorization" || lower === "proxy-authorization" || lower === "x-api-key") {
+    return true;
+  }
+
+  // 2. Redact cookie variants
+  if (lower.includes("cookie")) {
+    return true;
+  }
+
+  // 3. Redact case/format variants of password, token, key, secret
+  if (
+    lower.includes("password") ||
+    lower.includes("token") ||
+    lower.includes("key") ||
+    lower.includes("secret")
+  ) {
+    return true;
+  }
+
+  // 4. Case/format variants of original sensitive fields
+  const originalSensitive = [
+    "body", "prompt", "proposedtext", "proposed_text",
+    "currenttext", "current_text", "originaltext", "original_text"
+  ];
+  if (originalSensitive.some(k => lower.includes(k) || lower === k)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function sanitizeErrorMessage(message: string): string {
+  const lower = message.toLowerCase();
+  const containsSensitive = [
+    "password", "token", "key", "secret", "cookie", "authorization",
+    "proxy-authorization", "api-key", "body", "prompt", "proposedtext",
+    "proposed_text", "currenttext", "current_text", "originaltext", "original_text"
+  ].some(k => lower.includes(k));
+  if (containsSensitive) {
+    return "An operational error occurred (sanitized)";
+  }
+  return message;
+}
+
 /** Sanitizes query parameters and request bodies to redact credentials, prompts, and contract text. */
 export function sanitizeData(data: unknown): unknown {
   if (typeof data !== "object" || data === null) {
@@ -20,13 +68,8 @@ export function sanitizeData(data: unknown): unknown {
     return data.map(sanitizeData);
   }
   const sanitized: Record<string, unknown> = {};
-  const sensitiveKeys = [
-    "password", "passwordhash", "password_hash", "token", "tokenhash", "token_hash",
-    "cookie", "key", "body", "prompt", "proposedtext", "proposed_text",
-    "currenttext", "current_text", "originaltext", "original_text"
-  ];
   for (const [key, value] of Object.entries(data)) {
-    if (sensitiveKeys.includes(key.toLowerCase())) {
+    if (shouldRedact(key)) {
       sanitized[key] = "[REDACTED]";
     } else {
       sanitized[key] = sanitizeData(value);
@@ -38,9 +81,8 @@ export function sanitizeData(data: unknown): unknown {
 export function sanitizeUrl(urlStr: string): string {
   try {
     const url = new URL(urlStr);
-    const sensitiveKeys = ["password", "token", "key", "code"];
     for (const key of url.searchParams.keys()) {
-      if (sensitiveKeys.some(k => key.toLowerCase().includes(k))) {
+      if (shouldRedact(key)) {
         url.searchParams.set(key, "[REDACTED]");
       }
     }
@@ -52,7 +94,8 @@ export function sanitizeUrl(urlStr: string): string {
 
 /** Records a sanitized, deduplicated operational event without contract text or secrets. */
 export async function captureError(error: unknown, context: ErrorContext) {
-  const message = error instanceof Error ? error.message.slice(0, 500) : "Unknown application error";
+  let message = error instanceof Error ? error.message : "Unknown application error";
+  message = sanitizeErrorMessage(message).slice(0, 500);
   const fingerprint = await sha256Hex(`${context.route}\n${message}`);
   const now = new Date().toISOString();
   try {

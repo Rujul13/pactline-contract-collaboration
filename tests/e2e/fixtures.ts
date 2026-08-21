@@ -19,8 +19,22 @@ function migrateLocalD1(): void {
   if (!existsSync(D1_DIR)) throw new Error(`Local D1 directory not found at ${D1_DIR} — the Playwright webServer should have created it by the time a test runs. Is PACTLINE_E2E=true reaching vite.config.ts?`);
   const dbFile = findDbFile();
   if (!dbFile) throw new Error(`No local D1 sqlite file found under ${D1_DIR}`);
-  const db = new DatabaseSync(`${D1_DIR}/${dbFile}`);
+  const dbPath = `${D1_DIR}/${dbFile}`;
+  const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA foreign_keys=ON");
+
+  const tables = (db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all() as Array<{ name: string }>).map((row) => row.name);
+  const hasNotifications = tables.includes("notification_deliveries");
+
+  if (!hasNotifications) {
+    db.exec("PRAGMA foreign_keys=OFF");
+    const userTables = (db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>).map((row) => row.name);
+    for (const table of userTables) {
+      db.exec(`DROP TABLE IF EXISTS "${table}"`);
+    }
+    db.exec("PRAGMA foreign_keys=ON");
+  }
+
   const alreadyMigrated = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='contracts'").all().length > 0;
   if (!alreadyMigrated) {
     for (const file of readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort()) {

@@ -25,10 +25,10 @@ graph TD
 ### Task 2: Next.js API Route Wrapper & Error Sanitization
 - **Create:** `lib/monitoring.ts` utility.
 - **Implement:** `withMonitoring(handler)` wrapper function.
-  - Automatically wraps Next.js API route handlers.
+  - Applied to the 4 operational routes (GET `/api/contracts/[contractId]/relationships`, GET `/api/owner/monitoring/errors`, POST `/api/owner/monitoring/errors/[errorId]/resolve`, and GET `/api/owner/release-readiness`).
   - Generates `requestId` for each request (extracts from `x-request-id` header or generates using `crypto.randomUUID()`).
   - Catches unhandled errors, generates a fingerprint, and logs them to `error_events` table.
-  - Sanitizes the logged request data, metadata, and error message to strip sensitive keys (`password`, `token`, `cookie`, `key`, `proposedText`, `currentText`).
+  - Sanitizes the logged request data, metadata, and error message to strip sensitive keys (`password`, `token`, `cookie`, `key`, `proposedText`, `currentText`, `Authorization`, `Proxy-Authorization`, `X-API-Key`).
   - Dispatches to `MONITORING_ALERT_WEBHOOK_URL` if defined and severity is `critical`.
 
 ### Task 3: Operations & Release API Routes

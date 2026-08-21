@@ -232,7 +232,7 @@ test.describe("Operations and Diagnostics E2E", () => {
     await supplierContext.dispose();
   });
 
-  test("notifications scheduled sweep is idempotent and shows correct provider stub copy", async ({ playwright }) => {
+  test("notifications scheduled sweep is idempotent and shows correct provider stub copy", async ({ playwright, page }) => {
     const db = getDatabase();
     const reminderId = "test-reminder-sweep-1";
     const dueAt = new Date(Date.now() - 60000).toISOString(); // 1 minute ago (due)
@@ -288,22 +288,13 @@ test.describe("Operations and Diagnostics E2E", () => {
       db2.close();
     }
 
-    // Verify copy on Release Dashboard UI
-const tempBrowser = await playwright.chromium.launch();
-const ownerBrowserContext = await tempBrowser.newContext({
-  baseURL: BASE_URL,
-  extraHTTPHeaders: { host: `localhost:${new URL(BASE_URL).port}` }
-});
+    // Verify copy on Release Dashboard UI — use the `page` fixture which is already wired
+    // to the dev server's baseURL; no standalone browser launch needed.
+    await page.goto("/owner/release-dashboard");
 
-      const page = await ownerBrowserContext.newPage();
-      await page.goto(`${BASE_URL}/owner/release-dashboard`);
-
-      // Check that Notification Queue Log has our test delivery and shows "Logged — local stub"
-      await expect(page.locator("text=sweep-test@example.test")).toBeVisible();
-      await expect(page.locator("text=Logged — local stub")).toBeVisible();
-
-      await ownerBrowserContext.dispose();
-await tempBrowser.close();
+    // Check that Notification Queue Log has our test delivery and shows "Logged — local stub"
+    await expect(page.locator("text=sweep-test@example.test")).toBeVisible();
+    await expect(page.locator("text=Logged — local stub")).toBeVisible();
   });
 
   test("operations release dashboard UI is visible to the owner", async ({ page }) => {

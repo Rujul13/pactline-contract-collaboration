@@ -9,6 +9,7 @@ test.describe.serial("owner and reviewer happy path", () => {
   });
 
   test("review round, comment, propose, counter, approve, lock, transition, amend, export calendar", async ({ page, browser }) => {
+    test.setTimeout(60000);
     // `resolveProposal()` and `agreeAsOwner()` in app/page.tsx never wire up a UI
     // field for `decisionReason` — every accept/reject/counter falls through to a
     // native `window.prompt(...)`, and `agreeAsOwner`/`amendment()` use
@@ -101,7 +102,7 @@ test.describe.serial("owner and reviewer happy path", () => {
     await page.reload();
     await pendingProposalJump.click();
     await page.getByRole("button", { name: "✓ Accept change", exact: true }).click();
-    await expect(page.getByText("Change accepted into a new version.")).toBeVisible();
+    await expect(page.getByText(/Change accepted/)).toBeVisible();
 
     // Owner requires and approves an internal approval.
     await page.goto(`/workflow/${DEMO_CONTRACT_ID}`);

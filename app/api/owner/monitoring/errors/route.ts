@@ -4,7 +4,8 @@ import { withMonitoring } from "@/lib/monitoring";
 
 export const GET = withMonitoring(async function GET(request: Request) {
   if (request.headers.get("x-trigger-error") === "true") {
-    throw new Error("Deliberate test error for monitoring");
+    const customMsg = request.headers.get("x-trigger-error-msg");
+    throw new Error(customMsg || "Deliberate test error for monitoring");
   }
 
   const auth = await requireOwnerApi(request);
