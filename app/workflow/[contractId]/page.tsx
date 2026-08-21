@@ -18,6 +18,7 @@ type Workflow = { contract: Contract; reviewRounds: ReviewRound[]; comments: Com
 type Workspace = { blocks: Block[]; versions: Version[] };
 type Segment = { text: string; changed: boolean };
 type Comparison = { changedCount: number; from: { number: number; createdAt: string; author: string }; to: { number: number; createdAt: string; author: string }; blocks: Array<{ key: string; anchorId: string; kind: string; changed: boolean; diff: { original: Segment[]; proposed: Segment[] } }> };
+type LineageItem = { id: string; title: string; status: string; effective_date: string | null; relationship_type: string };
 
 const title = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const dateInput = (value?: string) => value ? new Date(value).toISOString().slice(0, 10) : "";
@@ -37,6 +38,7 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
   const [commentBlock, setCommentBlock] = useState(""); const [commentBody, setCommentBody] = useState(""); const [fromVersion, setFromVersion] = useState(1); const [toVersion, setToVersion] = useState(1); const [comparison, setComparison] = useState<Comparison | null>(null); const [showAll, setShowAll] = useState(false);
   const [redlineMode, setRedlineMode] = useState<"unified" | "side-by-side">("unified");
   const [replyBody, setReplyBody] = useState<Record<string, string>>({}); const [resolveReason, setResolveReason] = useState<Record<string, string>>({});
+  const [lineage, setLineage] = useState<{ predecessors: LineageItem[]; successors: LineageItem[] } | null>(null);
 
   const load = useCallback(async () => {
     const [workflowResponse, workspaceResponse] = await Promise.all([fetch(`/api/contracts/${contractId}/workflow`, { cache: "no-store" }), fetch(`/api/contracts/${contractId}/workspace`, { cache: "no-store" })]);
@@ -46,6 +48,11 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
     setWorkflow(workflowResult); setWorkspace(workspaceResult); const contract = workflowResult.contract;
     setForm({ lifecycleStage: contract.lifecycle_stage, renewalDate: dateInput(contract.renewal_date), noticePeriodDays: String(contract.notice_period_days ?? 30), contractValue: contract.contract_value_minor == null ? "" : (contract.contract_value_minor / 100).toFixed(2), currency: contract.currency ?? "USD", riskLevel: contract.risk_level ?? "medium", reviewDeadlineAt: dateTimeInput(contract.review_deadline_at) });
     setCommentBlock((current) => current || workspaceResult.blocks.find((block) => block.kind !== "title")?.id || ""); const versions = workspaceResult.versions.map((item) => item.version_number).sort((a, b) => a - b); setFromVersion(versions.at(-2) ?? versions[0] ?? 1); setToVersion(versions.at(-1) ?? 1);
+    const lineageResponse = await fetch(`/api/contracts/${contractId}/relationships`, { cache: "no-store" });
+    if (lineageResponse.ok) {
+      const lineageData = await lineageResponse.json() as { predecessors: LineageItem[]; successors: LineageItem[] };
+      setLineage(lineageData);
+    }
   }, [contractId, router]);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
   const blockMap = useMemo(() => new Map((workspace?.blocks ?? []).map((block, index) => [block.id, index + 1])), [workspace]); const openRound = workflow?.reviewRounds.find((item) => item.status === "open");
@@ -63,17 +70,20 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
 
   if (!workflow || !workspace) return <main className="workflow-loading"><span className="portal-spinner"/><p>{message || "Loading contract workflow…"}</p></main>;
   const contract = workflow.contract; const redlineBlocks = comparison?.blocks.filter((block) => showAll || block.changed) ?? [];
+  const isPredecessor = Boolean(lineage && lineage.successors.length > 0);
+
   return <main className="workflow-shell">
     <header className="workflow-top"><Link href="/">← Contract editor</Link><div><small>Contract operations</small><h1>{contract.title}</h1><p>Version {contract.current_version} · {title(contract.lifecycle_stage)} · {title(contract.risk_level)} risk</p></div><a href={`/api/contracts/${contractId}/calendar`}>Download calendar</a></header>
     {message && <div className="workflow-message" role="status">{message}</div>}
     <section className="workflow-grid">
-      <form className="workflow-card lifecycle-card" onSubmit={(event) => { event.preventDefault(); void mutate("lifecycle", { ...form, reviewDeadlineAt: instantOrUndefined(form.reviewDeadlineAt), noticePeriodDays: Number(form.noticePeriodDays), contractValue: form.contractValue }, "Lifecycle details saved and reminders rebuilt."); }}>
+      <form className="workflow-card lifecycle-card" onSubmit={(event) => { event.preventDefault(); if (isPredecessor) return; void mutate("lifecycle", { ...form, reviewDeadlineAt: instantOrUndefined(form.reviewDeadlineAt), noticePeriodDays: Number(form.noticePeriodDays), contractValue: form.contractValue }, "Lifecycle details saved and reminders rebuilt."); }}>
         <CardHead eyebrow="Business state" heading="Lifecycle management" badge={title(form.lifecycleStage)}/>
-        <label>Lifecycle stage<select value={form.lifecycleStage} onChange={(event) => setForm((current) => ({ ...current, lifecycleStage: event.target.value }))}>{["draft","internal_review","external_review","approved","executed","expired","renewed"].map((item) => <option value={item} key={item}>{title(item)}</option>)}</select></label>
-        <div className="workflow-form-row"><label>Risk level<select value={form.riskLevel} onChange={(event) => setForm((current) => ({ ...current, riskLevel: event.target.value }))}>{["low","medium","high","critical"].map((item) => <option value={item} key={item}>{title(item)}</option>)}</select></label><label>Responsible owner<input value={contract.responsible_owner_name ?? "Contract Owner"} disabled/></label></div>
-        <div className="workflow-form-row"><label>Contract value<input type="number" min="0" step="0.01" value={form.contractValue} onChange={(event) => setForm((current) => ({ ...current, contractValue: event.target.value }))} placeholder="25000.00"/></label><label>Currency<input maxLength={3} value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value.toUpperCase() }))}/></label></div>
-        <div className="workflow-form-row"><label>Renewal date<input type="date" value={form.renewalDate} onChange={(event) => setForm((current) => ({ ...current, renewalDate: event.target.value }))}/></label><label>Notice period (days)<input type="number" min="0" max="3650" value={form.noticePeriodDays} onChange={(event) => setForm((current) => ({ ...current, noticePeriodDays: event.target.value }))}/></label></div>
-        <label>Review deadline<input type="datetime-local" value={form.reviewDeadlineAt} onChange={(event) => setForm((current) => ({ ...current, reviewDeadlineAt: event.target.value }))}/></label><button className="workflow-primary" disabled={busy}>Save lifecycle details</button>
+        <label htmlFor="lifecycle-stage-select">Lifecycle stage</label>
+        <select id="lifecycle-stage-select" disabled={isPredecessor} value={form.lifecycleStage} onChange={(event) => setForm((current) => ({ ...current, lifecycleStage: event.target.value }))}>{["draft","internal_review","external_review","approved","executed","expired","renewed"].map((item) => <option value={item} key={item}>{title(item)}</option>)}</select>
+        <div className="workflow-form-row"><label>Risk level<select disabled={isPredecessor} value={form.riskLevel} onChange={(event) => setForm((current) => ({ ...current, riskLevel: event.target.value }))}>{["low","medium","high","critical"].map((item) => <option value={item} key={item}>{title(item)}</option>)}</select></label><label>Responsible owner<input value={contract.responsible_owner_name ?? "Contract Owner"} disabled/></label></div>
+        <div className="workflow-form-row"><label>Contract value<input disabled={isPredecessor} type="number" min="0" step="0.01" value={form.contractValue} onChange={(event) => setForm((current) => ({ ...current, contractValue: event.target.value }))} placeholder="25000.00"/></label><label>Currency<input disabled={isPredecessor} maxLength={3} value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value.toUpperCase() }))}/></label></div>
+        <div className="workflow-form-row"><label>Renewal date<input disabled={isPredecessor} type="date" value={form.renewalDate} onChange={(event) => setForm((current) => ({ ...current, renewalDate: event.target.value }))}/></label><label>Notice period (days)<input disabled={isPredecessor} type="number" min="0" max="3650" value={form.noticePeriodDays} onChange={(event) => setForm((current) => ({ ...current, noticePeriodDays: event.target.value }))}/></label></div>
+        <label>Review deadline<input disabled={isPredecessor} type="datetime-local" value={form.reviewDeadlineAt} onChange={(event) => setForm((current) => ({ ...current, reviewDeadlineAt: event.target.value }))}/></label><button className="workflow-primary" disabled={busy || isPredecessor}>Save lifecycle details</button>
       </form>
 
       <section className="workflow-card"><CardHead eyebrow="Timed collaboration" heading="Review rounds" badge={openRound ? `Round ${openRound.round_number} open` : "No open round"}/>
@@ -101,7 +111,25 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
         </>}
       </section>
 
-      <section className="workflow-card"><CardHead eyebrow="Controlled history" heading="Amendments and renewals" badge={`${workflow.relationships.length} linked`}/><p>A locked contract remains immutable. Continuing work creates a new linked agreement.</p><div className="workflow-inline"><button disabled={contract.status !== "locked" || busy} onClick={() => void amendment("amends")}>Create amendment</button><button disabled={contract.status !== "locked" || busy} onClick={() => void amendment("renews")}>Create renewal</button></div><CompactList items={workflow.relationships.map((item) => ({ key: item.id, strong: title(item.relationship_type), text: `${item.source_title} → ${item.target_title}` }))}/></section>
+      <section className="workflow-card"><CardHead eyebrow="Controlled history" heading="Amendments and renewals" badge={`${(lineage?.predecessors.length ?? 0) + (lineage?.successors.length ?? 0)} linked`}/><p>A locked contract remains immutable. Continuing work creates a new linked agreement.</p><div className="workflow-inline"><button disabled={contract.status !== "locked" || busy} onClick={() => void amendment("amends")}>Create amendment</button><button disabled={contract.status !== "locked" || busy} onClick={() => void amendment("renews")}>Create renewal</button></div>
+        {lineage && (
+          <div className="relationship-chain" style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "1rem" }}>
+            {lineage.predecessors.map((item: LineageItem) => (
+              <div key={item.id} className="relationship-node predecessor" style={{ padding: "0.5rem", borderLeft: "4px solid #aaa", background: "#f9f9f9" }}>
+                <strong>Amends: </strong><Link href={`/workflow/${item.id}`} style={{ fontWeight: "bold" }}>{item.title}</Link> <span>({title(item.status)} · Effective: {item.effective_date || "N/A"})</span>
+              </div>
+            ))}
+            <div className="relationship-node current active" style={{ padding: "0.5rem", borderLeft: "4px solid var(--color-primary, #0070f3)", background: "#eef6ff" }}>
+              <strong>Current: </strong><span style={{ fontWeight: "bold" }}>{contract.title}</span> <span>(v{contract.current_version} · Governing)</span>
+            </div>
+            {lineage.successors.map((item: LineageItem) => (
+              <div key={item.id} className="relationship-node successor" style={{ padding: "0.5rem", borderLeft: "4px solid #555", background: "#f5f5f5" }}>
+                <strong>Amended by: </strong><Link href={`/workflow/${item.id}`} style={{ fontWeight: "bold" }}>{item.title}</Link> <span>({title(item.status)} · Effective: {item.effective_date || "N/A"})</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
       <section className="workflow-card"><CardHead eyebrow="Delivery-ready" heading="Reminder schedule" badge={<a href={`/api/contracts/${contractId}/calendar`}>Export .ics</a>}/><p>Email delivery remains provider-neutral; calendar and in-app schedules work without a paid service.</p><CompactList items={workflow.reminders.map((item) => ({ key: item.id, strong: title(item.kind), text: `${new Date(item.due_at).toLocaleString()} · ${title(item.channel)} · ${title(item.status)}` }))}/></section>
       <section className="workflow-card monitoring-card"><CardHead eyebrow="Sanitized telemetry" heading="Operational errors" badge={`${workflow.errors.filter((item) => !item.resolved_at).length} open`}/><p>Request IDs and fingerprints are stored; passwords and contract text are excluded.</p><div className="error-list">{workflow.errors.length ? workflow.errors.map((item) => <article key={item.id} className={item.resolved_at ? "resolved" : ""}><div><strong>{title(item.severity)} · {item.route}</strong><span>{item.occurrence_count} occurrence{item.occurrence_count === 1 ? "" : "s"}</span></div><p>{item.message}</p><small>Request {item.request_id} · {new Date(item.last_seen_at).toLocaleString()}</small>{!item.resolved_at && <button onClick={() => void mutate("errors", { errorId: item.id }, "Operational error resolved.")}>Resolve</button>}</article>) : <div className="workflow-empty">No operational errors recorded.</div>}</div></section>
     </section>

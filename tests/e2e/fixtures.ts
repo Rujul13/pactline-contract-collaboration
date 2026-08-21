@@ -19,14 +19,39 @@ function migrateLocalD1(): void {
   if (!existsSync(D1_DIR)) throw new Error(`Local D1 directory not found at ${D1_DIR} — the Playwright webServer should have created it by the time a test runs. Is PACTLINE_E2E=true reaching vite.config.ts?`);
   const dbFile = findDbFile();
   if (!dbFile) throw new Error(`No local D1 sqlite file found under ${D1_DIR}`);
-  const db = new DatabaseSync(`${D1_DIR}/${dbFile}`);
+  const dbPath = `${D1_DIR}/${dbFile}`;
+  const db = new DatabaseSync(dbPath);
   db.exec("PRAGMA foreign_keys=ON");
-  const alreadyMigrated = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='contracts'").all().length > 0;
-  if (!alreadyMigrated) {
-    for (const file of readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort()) {
-      db.exec(readFileSync(`drizzle/${file}`, "utf8").replaceAll("--> statement-breakpoint", ""));
+
+  // Create migrations table if not exists
+  db.exec("CREATE TABLE IF NOT EXISTS __drizzle_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+
+  // Seed migrations for existing database if this is the first run using this tracker
+  const hasContracts = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='contracts'").all().length > 0;
+  const migrationCount = (db.prepare("SELECT COUNT(*) as count FROM __drizzle_migrations").get() as { count: number }).count;
+
+  if (hasContracts && migrationCount === 0) {
+    const files = readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort();
+    for (const file of files) {
+      if (file < "0012_notification_idempotency.sql") {
+        db.prepare("INSERT INTO __drizzle_migrations (name) VALUES (?)").run(file);
+      }
     }
   }
+
+  const applied = new Set(
+    (db.prepare("SELECT name FROM __drizzle_migrations").all() as Array<{ name: string }>).map((row) => row.name)
+  );
+
+  const files = readdirSync("drizzle").filter((name) => /^\d{4}.*\.sql$/.test(name)).sort();
+  for (const file of files) {
+    if (!applied.has(file)) {
+      console.log(`Applying E2E migration: ${file}`);
+      db.exec(readFileSync(`drizzle/${file}`, "utf8").replaceAll("--> statement-breakpoint", ""));
+      db.prepare("INSERT INTO __drizzle_migrations (name) VALUES (?)").run(file);
+    }
+  }
+
   db.close();
   migrated = true;
 }

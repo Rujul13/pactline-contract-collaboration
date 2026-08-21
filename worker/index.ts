@@ -44,8 +44,15 @@ const worker = {
 
     return handler.fetch(request, env, ctx);
   },
-  async scheduled(_controller: ScheduledController, _env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(refreshAllOrganizationAlerts());
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil((async () => {
+      await refreshAllOrganizationAlerts();
+      const { sweepReminderSchedules, processNotificationQueue } = await import("../lib/notifications");
+      await sweepReminderSchedules();
+      await processNotificationQueue();
+      const now = new Date().toISOString();
+      await env.DB.prepare("INSERT INTO app_settings (key, value, updated_at) VALUES ('cron_last_run_at', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at").bind(now, now).run().catch(err => console.error("Failed to update cron timestamp", err));
+    })());
   },
 };
 
