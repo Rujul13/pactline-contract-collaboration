@@ -7,12 +7,6 @@ import { enqueueNotification } from "@/lib/notifications";
 
 const KINDS = ["legal", "finance", "security", "business"];
 
-function getBaseUrl(request: Request): string {
-  const host = request.headers.get("host") || "localhost:4319";
-  const proto = request.headers.get("x-forwarded-proto") || (host.includes("localhost") ? "http" : "https");
-  return `${proto}://${host}`;
-}
-
 export async function GET(request: Request, context: { params: Promise<{ contractId: string }> }) {
   const auth = await requireOwnerApi(request);
   if (auth.response) return auth.response;
@@ -85,7 +79,6 @@ export async function POST(request: Request, context: { params: Promise<{ contra
 
   const now = new Date().toISOString();
   const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
-  const baseUrl = getBaseUrl(request);
 
   try {
     // ------------------------------------------------------------------
@@ -195,7 +188,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       ).bind(assignmentId, contractId, approver.id, contract.current_version, kind, required ? 1 : 0, owner.id, now, now).run();
 
       // 3. Create approval_invite (24h TTL)
-      const invite = await createApprovalInvite(assignmentId, approver.id, owner.id, baseUrl);
+      const invite = await createApprovalInvite(assignmentId, approver.id, owner.id);
 
       // 4. Update contract stage to internal_review
       await env.DB.prepare("UPDATE contracts SET lifecycle_stage = 'internal_review', updated_at = ? WHERE id = ?").bind(now, contractId).run();
@@ -300,7 +293,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       ).bind(newAssignmentId, contractId, newApprover.id, existing.version_number, existing.kind, existing.required, owner.id, now, now).run();
 
       // 4. Create fresh invite (24h TTL)
-      const invite = await createApprovalInvite(newAssignmentId, newApprover.id, owner.id, baseUrl);
+      const invite = await createApprovalInvite(newAssignmentId, newApprover.id, owner.id);
 
       // Audit log event
       await env.DB.prepare(
@@ -342,7 +335,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       const owner = await env.DB.prepare("SELECT id FROM users WHERE external_identity_id = ?").bind(auth.user.userId).first<{ id: string }>();
       if (!owner) return Response.json({ error: "Owner account not found" }, { status: 404 });
 
-      const invite = await createApprovalInvite(assignment.id, assignment.delegated_approver_id, owner.id, baseUrl);
+      const invite = await createApprovalInvite(assignment.id, assignment.delegated_approver_id, owner.id);
 
       await env.DB.prepare(
         `INSERT INTO audit_log_entries

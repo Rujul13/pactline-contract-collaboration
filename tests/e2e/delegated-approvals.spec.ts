@@ -37,6 +37,105 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
     await reviewerContext.dispose();
   });
 
+  test("hostile Host-header is rejected and invite URL always uses configured canonical app URL", async ({ playwright }) => {
+    const ownerContext = await playwright.request.newContext({
+      baseURL: BASE_URL,
+      storageState: { cookies: [], origins: [] },
+      extraHTTPHeaders: {
+        "x-forwarded-host": "evil.attacker.test",
+        "oai-authenticated-user-id": "local-contract-owner",
+        "oai-authenticated-user-email": "owner@example.test",
+      },
+    });
+
+    const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "security.lead@company.test",
+        displayName: "Security Lead",
+        titleRole: "CSO",
+        kind: "security",
+      },
+    });
+    expect(assignRes.status()).toBe(201);
+    const data = (await assignRes.json()) as { assignment: { inviteUrl: string } };
+
+    // Verify inviteUrl does NOT contain evil.attacker.test
+    expect(data.assignment.inviteUrl).not.toContain("evil.attacker.test");
+    expect(data.assignment.inviteUrl).toContain("/approve/invite?token=");
+
+    await ownerContext.dispose();
+  });
+
+  test("concurrent double-consumption of an invite token is prevented via atomic compare-and-set", async ({ playwright }) => {
+    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "finance.dir@company.test",
+        displayName: "Finance Dir",
+        titleRole: "CFO",
+        kind: "finance",
+      },
+    });
+    expect(assignRes.status()).toBe(201);
+    const assignData = (await assignRes.json()) as { assignment: { inviteUrl: string } };
+    const inviteToken = new URL(assignData.assignment.inviteUrl).searchParams.get("token")!;
+
+    const clientA = await playwright.request.newContext({ baseURL: BASE_URL });
+    const clientB = await playwright.request.newContext({ baseURL: BASE_URL });
+
+    // Race two concurrent consumption requests with the same raw token
+    const [resA, resB] = await Promise.all([
+      clientA.post("/api/approver/invite/consume", { data: { token: inviteToken } }),
+      clientB.post("/api/approver/invite/consume", { data: { token: inviteToken } }),
+    ]);
+
+    const statuses = [resA.status(), resB.status()].sort((a, b) => a - b);
+    // Exactly one must succeed (200) and the second must fail (410)
+    expect(statuses).toEqual([200, 410]);
+
+    await ownerContext.dispose();
+    await clientA.dispose();
+    await clientB.dispose();
+  });
+
+  test("concurrent double-decision on the same assignment is rejected via compare-and-set UPDATE", async ({ playwright }) => {
+    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
+      data: {
+        action: "assign_delegated",
+        email: "approver.race@company.test",
+        displayName: "Approver Race",
+        titleRole: "Director",
+        kind: "business",
+      },
+    });
+    expect(assignRes.status()).toBe(201);
+    const assignData = (await assignRes.json()) as { assignment: { id: string; inviteUrl: string } };
+    const inviteToken = new URL(assignData.assignment.inviteUrl).searchParams.get("token")!;
+
+    const approverContext = await playwright.request.newContext({ baseURL: BASE_URL });
+    await approverContext.post("/api/approver/invite/consume", { data: { token: inviteToken } });
+
+    // Race two concurrent decision requests on the same assignment ID
+    const [decideA, decideB] = await Promise.all([
+      approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+        data: { assignmentId: assignData.assignment.id, decision: "approved", decisionReason: "First concurrent decision payload" },
+      }),
+      approverContext.post(`/api/approver/contracts/${DEMO_CONTRACT_ID}/decide`, {
+        data: { assignmentId: assignData.assignment.id, decision: "edits_requested", decisionReason: "Second concurrent decision payload" },
+      }),
+    ]);
+
+    const statuses = [decideA.status(), decideB.status()].sort((a, b) => a - b);
+    // Exactly one succeeds (200) and the second is rejected with 409 Conflict
+    expect(statuses).toEqual([200, 409]);
+
+    await ownerContext.dispose();
+    await approverContext.dispose();
+  });
+
   test("full delegated approval lifecycle, two-step invite, version invalidation, and server gate enforcement", async ({ page, playwright }) => {
     const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL });
 

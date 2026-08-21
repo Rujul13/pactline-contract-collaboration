@@ -13,6 +13,18 @@ export type ApproverSession = {
   titleRole: string;
 };
 
+export function isProductionEnvironment(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+export function getCanonicalAppUrl(): string {
+  const envUrl = process.env.PACTLINE_APP_URL || process.env.BASE_URL;
+  if (envUrl && typeof envUrl === "string" && envUrl.trim().length > 0) {
+    return envUrl.trim().replace(/\/+$/, "");
+  }
+  return "http://localhost:4319";
+}
+
 export function generateToken(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
@@ -36,14 +48,22 @@ export function parseCookies(cookieHeader: string | null): Record<string, string
 export function getApproverTokenFromRequest(request: Request): string | null {
   const cookieHeader = request.headers.get("cookie");
   const cookies = parseCookies(cookieHeader);
-  return cookies[APPROVER_COOKIE_HOST] || cookies[APPROVER_COOKIE_DEV] || null;
+  const hostCookie = cookies[APPROVER_COOKIE_HOST];
+
+  if (hostCookie) return hostCookie;
+
+  // Accept non-Secure dev cookie ONLY in non-production environments
+  if (!isProductionEnvironment()) {
+    return cookies[APPROVER_COOKIE_DEV] || null;
+  }
+
+  return null;
 }
 
 export async function createApprovalInvite(
   assignmentId: string,
   delegatedApproverId: string,
-  createdBy: string,
-  baseUrl: string
+  createdBy: string
 ): Promise<{ inviteId: string; rawToken: string; inviteUrl: string; expiresAt: string }> {
   const rawToken = generateToken();
   const tokenHash = await sha256Hex(rawToken);
@@ -62,6 +82,7 @@ export async function createApprovalInvite(
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).bind(inviteId, assignmentId, delegatedApproverId, tokenHash, expiresAt, createdBy, now.toISOString()).run();
 
+  const baseUrl = getCanonicalAppUrl();
   const inviteUrl = `${baseUrl}/approve/invite?token=${rawToken}`;
   return { inviteId, rawToken, inviteUrl, expiresAt };
 }
@@ -104,12 +125,18 @@ export async function consumeInviteToken(
     return { success: false, error: "Invitation link has expired" };
   }
 
-  // Mark invite as consumed
-  await env.DB.prepare(
-    "UPDATE approval_invites SET used_at = ? WHERE id = ?"
-  ).bind(nowStr, invite.invite_id).run();
+  // ATOMIC COMPARE-AND-SET UPDATE: Mark as used ONLY IF currently unused, unrevoked, and unexpired
+  const updateResult = await env.DB.prepare(
+    `UPDATE approval_invites
+     SET used_at = ?
+     WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`
+  ).bind(nowStr, invite.invite_id, nowStr).run();
 
-  // Create approver session
+  if (updateResult.meta.changes !== 1) {
+    return { success: false, error: "Invitation link has already been consumed or invalidated" };
+  }
+
+  // Create approver session ONLY when compare-and-set update affected exactly 1 row
   const sessionToken = generateToken();
   const sessionHash = await sha256Hex(sessionToken);
   const sessionId = crypto.randomUUID();
@@ -170,12 +197,11 @@ export async function getApproverSession(request: Request): Promise<ApproverSess
   const lastActiveTime = new Date(session.last_active_at).getTime();
   const inactivityMs = now.getTime() - lastActiveTime;
   if (inactivityMs > 30 * 60 * 1000) {
-    // Revoke session due to inactivity
     await env.DB.prepare("UPDATE approver_sessions SET revoked_at = ? WHERE id = ?").bind(nowStr, session.session_id).run();
     return null;
   }
 
-  // Update sliding activity timestamp asynchronously
+  // Update sliding activity timestamp
   await env.DB.prepare("UPDATE approver_sessions SET last_active_at = ? WHERE id = ?").bind(nowStr, session.session_id).run();
 
   return {
@@ -189,28 +215,31 @@ export async function getApproverSession(request: Request): Promise<ApproverSess
 }
 
 export function applyApproverSessionCookie(headers: Headers, sessionToken: string): void {
-  // Set Host cookie as primary, and fallback cookie for dev environment non-HTTPS
   headers.append(
     "Set-Cookie",
     `${APPROVER_COOKIE_HOST}=${sessionToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`
   );
-  headers.append(
-    "Set-Cookie",
-    `${APPROVER_COOKIE_DEV}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800`
-  );
+  if (!isProductionEnvironment()) {
+    headers.append(
+      "Set-Cookie",
+      `${APPROVER_COOKIE_DEV}=${sessionToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800`
+    );
+  }
 }
 
 export function clearApproverSessionCookie(headers: Headers): void {
   headers.append("Set-Cookie", `${APPROVER_COOKIE_HOST}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
-  headers.append("Set-Cookie", `${APPROVER_COOKIE_DEV}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+  if (!isProductionEnvironment()) {
+    headers.append("Set-Cookie", `${APPROVER_COOKIE_DEV}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+  }
 }
 
-export async function instantiateNextVersionApprovals(
+export async function prepareNextVersionApprovalStatements(
   contractId: string,
   previousVersion: number,
   nextVersion: number,
   now: string
-): Promise<void> {
+): Promise<Array<ReturnType<typeof env.DB.prepare>>> {
   const prevAssignments = await env.DB.prepare(
     `SELECT DISTINCT delegated_approver_id, kind, required, assigned_by
      FROM approval_assignments
@@ -223,15 +252,15 @@ export async function instantiateNextVersionApprovals(
   }>();
 
   if (!prevAssignments || !prevAssignments.results || prevAssignments.results.length === 0) {
-    return;
+    return [];
   }
 
-  for (const prev of prevAssignments.results) {
+  return prevAssignments.results.map((prev) => {
     const newId = crypto.randomUUID();
-    await env.DB.prepare(
+    return env.DB.prepare(
       `INSERT INTO approval_assignments
          (id, contract_id, delegated_approver_id, version_number, kind, required, status, assigned_by, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
-    ).bind(newId, contractId, prev.delegated_approver_id, nextVersion, prev.kind, prev.required, prev.assigned_by, now, now).run();
-  }
+    ).bind(newId, contractId, prev.delegated_approver_id, nextVersion, prev.kind, prev.required, prev.assigned_by, now, now);
+  });
 }

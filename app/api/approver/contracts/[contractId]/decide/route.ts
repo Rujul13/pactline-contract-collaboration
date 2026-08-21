@@ -72,14 +72,24 @@ export async function POST(request: Request, context: { params: Promise<{ contra
 
     const now = new Date().toISOString();
 
-    // Update assignment status
-    await env.DB.prepare(
+    // ATOMIC COMPARE-AND-SET UPDATE: require pending status, current version, and ownership
+    const result = await env.DB.prepare(
       `UPDATE approval_assignments
        SET status = ?, decision_reason = ?, resolved_at = ?, updated_at = ?
-       WHERE id = ?`
-    ).bind(decision, reason, now, now, assignmentId).run();
+       WHERE id = ?
+         AND contract_id = ?
+         AND delegated_approver_id = ?
+         AND version_number = (SELECT current_version FROM contracts WHERE id = ?)
+         AND status = 'pending'`
+    ).bind(decision, reason, now, now, assignmentId, contractId, session.delegatedApproverId, contractId).run();
 
-    // Audit log entry
+    if (result.meta.changes !== 1) {
+      return Response.json({
+        error: "Conflict: Pending assignment not found, already decided, for an outdated version, or unauthorized"
+      }, { status: 409 });
+    }
+
+    // Audit log entry ONLY when CAS update affected exactly 1 row
     await env.DB.prepare(
       `INSERT INTO audit_log_entries
          (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at)
