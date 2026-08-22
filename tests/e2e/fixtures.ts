@@ -57,12 +57,12 @@ function migrateLocalD1(): void {
 }
 
 export async function resetDemo(): Promise<void> {
-  const context = await playwrightRequest.newContext({ baseURL: BASE_URL, extraHTTPHeaders: { host: `localhost:${new URL(BASE_URL).port}` } });
+  const context = await playwrightRequest.newContext({
+    baseURL: BASE_URL,
+    storageState: { cookies: [], origins: [] },
+    extraHTTPHeaders: { host: `localhost:${new URL(BASE_URL).port}` },
+  });
   if (!migrated) {
-    // Miniflare only materializes the per-database D1 sqlite file on the first
-    // actual query against the binding — a plain server boot / health-check GET
-    // does not touch it. Fire a throwaway request so migrateLocalD1() below has
-    // a file to find; its failure (missing tables) is expected and ignored.
     if (!existsSync(D1_DIR) || !findDbFile()) {
       await context.post("/api/demo/reset").catch(() => undefined);
     }

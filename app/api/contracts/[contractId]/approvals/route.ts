@@ -4,6 +4,7 @@ import { ownerContract } from "@/lib/workflow";
 import { captureError } from "@/lib/monitoring";
 import { createApprovalInvite } from "@/lib/approver-auth";
 import { enqueueNotification } from "@/lib/notifications";
+import { DEMO_OWNER_ORGANIZATION_ID } from "@/lib/v2";
 
 const KINDS = ["legal", "finance", "security", "business"];
 
@@ -149,7 +150,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       const owner = await env.DB.prepare("SELECT id FROM users WHERE external_identity_id = ?").bind(auth.user.userId).first<{ id: string }>();
       if (!owner) return Response.json({ error: "Owner account not found" }, { status: 404 });
 
-      const orgId = contract.owner_organization_id || "org-pactline-default";
+      const orgId = contract.owner_organization_id || DEMO_OWNER_ORGANIZATION_ID;
 
       // 1. Find or Create delegated_approver in organization
       let approver = await env.DB.prepare(
@@ -258,7 +259,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       const owner = await env.DB.prepare("SELECT id FROM users WHERE external_identity_id = ?").bind(auth.user.userId).first<{ id: string }>();
       if (!owner) return Response.json({ error: "Owner account not found" }, { status: 404 });
 
-      const orgId = contract.owner_organization_id || "org-pactline-default";
+      const orgId = contract.owner_organization_id || DEMO_OWNER_ORGANIZATION_ID;
 
       // 1. Mark existing assignment as superseded (preserving history)
       await env.DB.prepare(

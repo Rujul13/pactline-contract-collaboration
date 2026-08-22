@@ -22,6 +22,9 @@ export function getCanonicalAppUrl(): string {
   if (envUrl && typeof envUrl === "string" && envUrl.trim().length > 0) {
     return envUrl.trim().replace(/\/+$/, "");
   }
+  if (isProductionEnvironment()) {
+    throw new Error("PACTLINE_APP_URL or BASE_URL must be configured in production environment.");
+  }
   return "http://localhost:4319";
 }
 
