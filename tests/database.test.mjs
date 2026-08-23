@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { parseDrizzleStatements } from "../lib/migrations-runtime.ts";
 
 async function migratedDatabase() {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys=ON");
   const files = (await readdir(new URL("../drizzle/", import.meta.url))).filter((name) => /^\d{4}.*\.sql$/.test(name)).sort();
   for (const file of files) {
-    const sql = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");
-    database.exec(sql.replaceAll("--> statement-breakpoint", ""));
+    const rawSql = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");
+    const statements = parseDrizzleStatements(rawSql);
+    for (const statement of statements) {
+      database.exec(statement);
+    }
   }
   return database;
 }
@@ -52,6 +56,23 @@ test("all migrations apply cleanly and match the active paragraph model", async 
   const assignIndexes = database.prepare("PRAGMA index_list(approval_assignments)").all().map((row) => row.name);
   assert.ok(assignIndexes.includes("idx_approval_assignments_contract_version"));
 
+  database.close();
+});
+
+test("parseDrizzleStatements splits multiline breakpoint SQL files correctly from cold empty state", async () => {
+  const sampleSql = `CREATE TABLE \`users\` (\`id\` text PRIMARY KEY NOT NULL);\n--> statement-breakpoint\nCREATE TABLE \`contracts\` (\`id\` text PRIMARY KEY NOT NULL);`;
+  const parsed = parseDrizzleStatements(sampleSql);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0], "CREATE TABLE `users` (`id` text PRIMARY KEY NOT NULL);");
+  assert.equal(parsed[1], "CREATE TABLE `contracts` (`id` text PRIMARY KEY NOT NULL);");
+
+  const database = new DatabaseSync(":memory:");
+  database.exec("CREATE TABLE IF NOT EXISTS __drizzle_migrations (name TEXT PRIMARY KEY, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+  for (const stmt of parsed) {
+    database.exec(stmt);
+  }
+  const tables = database.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('users', 'contracts')").all().map((row) => row.name);
+  assert.equal(tables.length, 2);
   database.close();
 });
 
