@@ -2,10 +2,14 @@ import { env } from "cloudflare:workers";
 import { requireOwnerApi } from "@/lib/owner-boundary";
 import { DEMO_CONTRACT_ID, ensureDemoWorkspace } from "@/lib/demo";
 import { ensureV2Workspace } from "@/lib/v2";
+import { ensureMigrationsApplied } from "@/lib/migrations-runtime";
 
 export async function POST(request: Request) {
   const auth = await requireOwnerApi(request); if (auth.response) return auth.response;
   const user = auth.user;
+
+  await ensureMigrationsApplied();
+
   const objects = await env.DB.prepare("SELECT object_key FROM document_objects WHERE contract_id=?").bind(DEMO_CONTRACT_ID).all<{ object_key: string }>().catch(() => ({ results: [] }));
 
   try {
