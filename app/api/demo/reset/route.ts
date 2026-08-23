@@ -8,7 +8,12 @@ export async function POST(request: Request) {
   const auth = await requireOwnerApi(request); if (auth.response) return auth.response;
   const user = auth.user;
 
-  await ensureMigrationsApplied();
+  try {
+    await ensureMigrationsApplied();
+  } catch (error) {
+    console.error("Failed to apply D1 migrations on reset:", error);
+    return Response.json({ error: "Failed to apply D1 migrations", detail: String(error) }, { status: 500 });
+  }
 
   const objects = await env.DB.prepare("SELECT object_key FROM document_objects WHERE contract_id=?").bind(DEMO_CONTRACT_ID).all<{ object_key: string }>().catch(() => ({ results: [] }));
 
