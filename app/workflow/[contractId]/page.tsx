@@ -39,6 +39,20 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
   const [redlineMode, setRedlineMode] = useState<"unified" | "side-by-side">("unified");
   const [replyBody, setReplyBody] = useState<Record<string, string>>({}); const [resolveReason, setResolveReason] = useState<Record<string, string>>({});
   const [lineage, setLineage] = useState<{ predecessors: LineageItem[]; successors: LineageItem[] } | null>(null);
+  const [delegatedEmail, setDelegatedEmail] = useState("");
+  const [delegatedName, setDelegatedName] = useState("");
+  const [delegatedTitle, setDelegatedTitle] = useState("");
+  const [delegatedAssignments, setDelegatedAssignments] = useState<Array<{
+    id: string;
+    version_number: number;
+    kind: string;
+    status: string;
+    decision_reason: string | null;
+    approver_name: string;
+    approver_email: string;
+    approver_title_role: string;
+  }>>([]);
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [workflowResponse, workspaceResponse] = await Promise.all([fetch(`/api/contracts/${contractId}/workflow`, { cache: "no-store" }), fetch(`/api/contracts/${contractId}/workspace`, { cache: "no-store" })]);
@@ -52,6 +66,11 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
     if (lineageResponse.ok) {
       const lineageData = await lineageResponse.json() as { predecessors: LineageItem[]; successors: LineageItem[] };
       setLineage(lineageData);
+    }
+    const approvalsRes = await fetch(`/api/contracts/${contractId}/approvals`, { cache: "no-store" });
+    if (approvalsRes.ok) {
+      const data = await approvalsRes.json() as { assignments: typeof delegatedAssignments };
+      setDelegatedAssignments(data.assignments || []);
     }
   }, [contractId, router]);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
@@ -93,6 +112,105 @@ export default function ContractWorkflowPage({ params }: { params: Promise<{ con
 
       <section className="workflow-card"><CardHead eyebrow="Version gate" heading="Required approvals" badge={`Version ${contract.current_version}`}/><div className="workflow-inline"><select value={approvalKind} onChange={(event) => setApprovalKind(event.target.value)}>{["legal","finance","security","business"].map((item) => <option key={item}>{item}</option>)}</select><button disabled={busy} onClick={() => void mutate("approvals", { action: "require", kind: approvalKind }, `${title(approvalKind)} approval required.`)}>Add requirement</button></div><label>Decision reason<textarea value={approvalReason} onChange={(event) => setApprovalReason(event.target.value)} placeholder="Approved because the position is within policy."/></label>
         <div className="approval-list">{workflow.approvals.map((approval) => <article key={approval.id}><div><strong>{title(approval.kind)}</strong><span>v{approval.version_number} · {title(approval.status)}</span></div>{approval.status === "pending" ? <div><button disabled={approvalReason.trim().length < 3 || busy} onClick={() => void mutate("approvals", { action: "decide", approvalId: approval.id, decision: "approved", reason: approvalReason }, "Approval recorded.").then(() => setApprovalReason(""))}>Approve</button><button disabled={approvalReason.trim().length < 3 || busy} onClick={() => void mutate("approvals", { action: "decide", approvalId: approval.id, decision: "edits_requested", reason: approvalReason }, "Edits requested.").then(() => setApprovalReason(""))}>Request edits</button></div> : <p>{approval.decision_reason}</p>}</article>)}</div>
+
+        <div style={{ marginTop: "1.5rem", borderTop: "1px solid #e2e8f0", paddingTop: "1rem" }}>
+          <h4 style={{ margin: "0 0 0.5rem 0", color: "#334155" }}>Delegated Multi-Person Approvals (Phase 3)</h4>
+          <div className="workflow-inline" style={{ flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
+            <input type="email" value={delegatedEmail} onChange={(e) => setDelegatedEmail(e.target.value)} placeholder="approver@company.test" style={{ flex: 1, minWidth: "160px" }} />
+            <input type="text" value={delegatedName} onChange={(e) => setDelegatedName(e.target.value)} placeholder="Full Name" style={{ flex: 1, minWidth: "120px" }} />
+            <input type="text" value={delegatedTitle} onChange={(e) => setDelegatedTitle(e.target.value)} placeholder="Title / Role (e.g. Legal Counsel)" style={{ flex: 1, minWidth: "160px" }} />
+            <select value={approvalKind} onChange={(e) => setApprovalKind(e.target.value)}>{["legal","finance","security","business"].map((item) => <option key={item}>{item}</option>)}</select>
+            <button
+              disabled={busy || !delegatedEmail.trim() || !delegatedName.trim() || !delegatedTitle.trim()}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const res = await fetch(`/api/contracts/${contractId}/approvals`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      action: "assign_delegated",
+                      email: delegatedEmail,
+                      displayName: delegatedName,
+                      titleRole: delegatedTitle,
+                      kind: approvalKind,
+                    }),
+                  });
+                  const data = (await res.json()) as { assignment?: { inviteUrl: string }; error?: string };
+                  if (!res.ok) throw new Error(data.error || "Failed to assign approver");
+                  if (data.assignment?.inviteUrl) setCopiedLink(data.assignment.inviteUrl);
+                  setMessage("Delegated approver assigned.");
+                  setDelegatedEmail(""); setDelegatedName(""); setDelegatedTitle("");
+                  await load();
+                } catch (err: unknown) {
+                  setMessage((err as Error).message);
+                } finally { setBusy(false); }
+              }}
+            >
+              Assign Approver
+            </button>
+          </div>
+
+          {copiedLink && (
+            <div style={{ padding: "0.5rem 1rem", backgroundColor: "#e0f2fe", color: "#0369a1", borderRadius: "4px", fontSize: "0.85rem", marginBottom: "1rem" }}>
+              ✓ Copyable Invite Link: <code style={{ userSelect: "all" }}>{copiedLink}</code>
+            </div>
+          )}
+
+          <div className="approval-list">
+            {delegatedAssignments.map((assignment) => (
+              <article key={assignment.id}>
+                <div>
+                  <strong>{title(assignment.kind)} — {assignment.approver_name} ({assignment.approver_title_role})</strong>
+                  <span>v{assignment.version_number} · {assignment.approver_email} · <code>{title(assignment.status)}</code></span>
+                </div>
+                {assignment.decision_reason && <p style={{ fontSize: "0.85rem", color: "#475569" }}>Rationale: {assignment.decision_reason}</p>}
+                {assignment.status === "pending" && (
+                  <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+                    <button
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          const res = await fetch(`/api/contracts/${contractId}/approvals`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ action: "invite_delegated", assignmentId: assignment.id }),
+                          });
+                          const data = (await res.json()) as { inviteUrl?: string; error?: string };
+                          if (!res.ok) throw new Error(data.error || "Failed to generate invite link");
+                          if (data.inviteUrl) setCopiedLink(data.inviteUrl);
+                        } catch (err: unknown) { setMessage((err as Error).message); }
+                        finally { setBusy(false); }
+                      }}
+                    >
+                      Get Invite Link
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          const res = await fetch(`/api/contracts/${contractId}/approvals`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ action: "revoke_delegated", assignmentId: assignment.id }),
+                          });
+                          if (!res.ok) throw new Error("Failed to revoke assignment");
+                          setMessage("Approval assignment revoked.");
+                          await load();
+                        } catch (err: unknown) { setMessage((err as Error).message); }
+                        finally { setBusy(false); }
+                      }}
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section className="workflow-card comments-card"><CardHead eyebrow="Paragraph discussion" heading="Comments and threads" badge={`${threads.filter((thread) => thread.status === "open").length} open`}/><label>Paragraph<select value={commentBlock} onChange={(event) => setCommentBlock(event.target.value)}>{workspace.blocks.map((block, index) => <option value={block.id} key={block.id}>{index + 1}. {block.current_text.slice(0, 80)}</option>)}</select></label><label>Comment<textarea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Explain the business or legal concern…"/></label><button className="workflow-primary" disabled={busy || !commentBody.trim()} onClick={() => void mutate("comments", { action: "add", blockId: commentBlock, body: commentBody }, "Comment added.").then(() => setCommentBody(""))}>Add comment</button>

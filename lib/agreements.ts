@@ -23,6 +23,8 @@ export async function recordInitiatorAgreement(contractId: string, actor: Actor)
   if ((pending?.total ?? 0) > 0) throw new DomainError("Resolve every pending proposal before agreeing", 409);
   const incompleteApprovals = await db.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
   if ((incompleteApprovals?.total ?? 0) > 0) throw new DomainError("Complete every required internal approval before the owner agrees", 409);
+  const incompleteDelegated = await db.prepare("SELECT COUNT(*) AS total FROM approval_assignments WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+  if ((incompleteDelegated?.total ?? 0) > 0) throw new DomainError("Complete every required delegated approval before the owner agrees", 409);
 
   const existing = await db.prepare("SELECT id FROM agreements WHERE contract_id = ? AND party_id = ? AND version_number = ?").bind(contractId, contract.initiator_party_id, contract.current_version).first<{ id: string }>();
   if (existing) return { agreed: true, locked: false, versionNumber: contract.current_version };
@@ -40,12 +42,12 @@ export async function recordInitiatorAgreement(contractId: string, actor: Actor)
 
   const lockAuditId = crypto.randomUUID();
   const lockGuard = mutationGuard(
-    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND NOT EXISTS (SELECT 1 FROM approval_assignments aa WHERE aa.contract_id=c.id AND aa.version_number=c.current_version AND aa.required=1 AND aa.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
     [contractId, contract.current_version],
   );
   try {
     await guardedBatch(lockGuard, [
-    db.prepare("UPDATE contracts SET status = 'locked', locked_at = ?, updated_at = ? WHERE id = ? AND current_version = ? AND status != 'locked'").bind(now, now, contractId, contract.current_version),
+    db.prepare("UPDATE contracts SET status = 'locked', lifecycle_stage = CASE WHEN lifecycle_stage IN ('draft', 'internal_review', 'external_review') THEN 'approved' ELSE lifecycle_stage END, locked_at = ?, updated_at = ? WHERE id = ? AND current_version = ? AND status != 'locked'").bind(now, now, contractId, contract.current_version),
     db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.locked', 'contract', ?, ?, ?, ?, ?, json(?), ?)").bind(lockAuditId, contractId, actor.id, actor.display, contractId, contract.current_version, actor.requestId, actor.ipAddress ?? null, actor.userAgent ?? null, JSON.stringify({ bothPartiesAgreed: true }), now),
     ]);
   } catch (error) {
@@ -73,22 +75,25 @@ export async function recordCounterpartyAgreement(contractId: string, session: {
     const now = new Date().toISOString();
     await db.batch([
       db.prepare("INSERT INTO agreements (id, contract_id, party_id, version_number, agreed_by, agreed_at) VALUES (?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), contractId, session.partyId, contract.current_version, session.accountId, now),
-      db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.agreed', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, contractId, contract.current_version, requestId, JSON.stringify({ partyRole: "counterparty" }), now),
+      db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.agreed', 'contract', ?, ?, ?, NULL, NULL, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, contractId, contract.current_version, requestId, JSON.stringify({ partyRole: "counterparty" }), now),
     ]);
   }
   const agreementCount = await db.prepare("SELECT COUNT(DISTINCT party_id) AS total FROM agreements WHERE contract_id=? AND version_number=?").bind(contractId, contract.current_version).first<{ total: number }>();
   if ((agreementCount?.total ?? 0) < 2) return { agreed: true, locked: false, versionNumber: contract.current_version };
   const incompleteApprovals = await db.prepare("SELECT COUNT(*) AS total FROM approval_requests WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
   if ((incompleteApprovals?.total ?? 0) > 0) return { agreed: true, locked: false, approvalPending: true, versionNumber: contract.current_version };
+  const incompleteDelegated = await db.prepare("SELECT COUNT(*) AS total FROM approval_assignments WHERE contract_id=? AND version_number=? AND required=1 AND status!='approved'").bind(contractId, contract.current_version).first<{ total: number }>();
+  if ((incompleteDelegated?.total ?? 0) > 0) return { agreed: true, locked: false, approvalPending: true, versionNumber: contract.current_version };
+
   const now = new Date().toISOString();
   const lockGuard = mutationGuard(
-    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
+    "EXISTS (SELECT 1 FROM contracts c WHERE c.id=? AND c.current_version=? AND c.status!='locked' AND NOT EXISTS (SELECT 1 FROM paragraph_proposals p WHERE p.contract_id=c.id AND p.status='pending') AND NOT EXISTS (SELECT 1 FROM approval_requests a WHERE a.contract_id=c.id AND a.version_number=c.current_version AND a.required=1 AND a.status!='approved') AND NOT EXISTS (SELECT 1 FROM approval_assignments aa WHERE aa.contract_id=c.id AND aa.version_number=c.current_version AND aa.required=1 AND aa.status!='approved') AND (SELECT COUNT(DISTINCT party_id) FROM agreements WHERE contract_id=c.id AND version_number=c.current_version)>=2)",
     [contractId, contract.current_version],
   );
   try {
     await guardedBatch(lockGuard, [
-    db.prepare("UPDATE contracts SET status='locked', locked_at=?, updated_at=? WHERE id=? AND current_version=? AND status!='locked'").bind(now, now, contractId, contract.current_version),
-    db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.locked', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, contractId, contract.current_version, requestId, JSON.stringify({ bothPartiesAgreed: true }), now),
+    db.prepare("UPDATE contracts SET status='locked', lifecycle_stage = CASE WHEN lifecycle_stage IN ('draft', 'internal_review', 'external_review') THEN 'approved' ELSE lifecycle_stage END, locked_at=?, updated_at=? WHERE id=? AND current_version=? AND status!='locked'").bind(now, now, contractId, contract.current_version),
+    db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, 'contract.locked', 'contract', ?, ?, ?, NULL, NULL, json(?), ?)").bind(crypto.randomUUID(), contractId, session.accountId, `${session.name} (${session.username})`, contractId, contract.current_version, requestId, JSON.stringify({ bothPartiesAgreed: true }), now),
     ]);
   } catch (error) {
     if (error instanceof MutationConflictError) {

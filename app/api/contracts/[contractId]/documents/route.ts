@@ -4,6 +4,7 @@ import { parseDocxBytes, sha256BufferHex } from "@/lib/docx-server";
 import { sha256Hex } from "@/lib/security";
 import { DEMO_CONTRACT_ID } from "@/lib/demo";
 import { guardedBatch, MutationConflictError, mutationGuard } from "@/lib/mutations";
+import { prepareNextVersionApprovalStatements } from "@/lib/approver-auth";
 
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const MAX_DOCX_BYTES = 15 * 1024 * 1024;
@@ -43,6 +44,10 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       "EXISTS (SELECT 1 FROM contracts WHERE id=? AND current_version=? AND status NOT IN ('agreed','locked'))",
       [contractId, contract.current_version],
     );
+
+    // Prepare fresh version-scoped approval assignments atomically inside the same batch
+    const nextApprovalStatements = await prepareNextVersionApprovalStatements(contractId, contract.current_version, nextVersion, now);
+
     await guardedBatch(guard, [
       env.DB.prepare("INSERT INTO document_objects (id, contract_id, object_key, filename, content_type, byte_size, sha256, scan_status, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)").bind(documentId, contractId, objectKey, safeName, DOCX_TYPE, file.size, sha256, user.userId, now),
       env.DB.prepare("DELETE FROM document_blocks WHERE contract_id=?").bind(contractId),
@@ -51,6 +56,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
       env.DB.prepare("UPDATE contracts SET current_version=?, status='negotiating', updated_at=? WHERE id=? AND current_version=?").bind(nextVersion, now, contractId, contract.current_version),
       env.DB.prepare("UPDATE paragraph_proposals SET status='withdrawn', resolved_at=?, resolved_by=?, updated_at=? WHERE contract_id=? AND status='pending'").bind(now, user.userId, now, contractId),
       env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, 'document.uploaded', 'document', ?, ?, ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, "Contract Owner", documentId, nextVersion, request.headers.get("x-request-id") ?? crypto.randomUUID(), request.headers.get("cf-connecting-ip"), request.headers.get("user-agent"), JSON.stringify({ filename: safeName, byteSize: file.size, sha256, scanStatus: "pending", paragraphs: rows.length }), now),
+      ...nextApprovalStatements,
     ]);
   } catch (error) {
     await env.DOCUMENTS.delete(objectKey);

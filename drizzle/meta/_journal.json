@@ -92,6 +92,13 @@
       "when": 1787333117219,
       "tag": "0012_notification_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787343789421,
+      "tag": "0013_delegated_approvals",
+      "breakpoints": true
     }
   ]
 }

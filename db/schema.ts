@@ -476,3 +476,65 @@ export const notificationPreferences = sqliteTable("notification_preferences", {
   uniqueIndex("idx_notification_pref_user_type").on(table.userId, table.notificationType),
   uniqueIndex("idx_notification_pref_portal_type").on(table.portalAccountId, table.notificationType),
 ]);
+
+export const delegatedApprovers = sqliteTable("delegated_approvers", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  displayName: text("display_name").notNull(),
+  titleRole: text("title_role").notNull(),
+  status: text("status", { enum: ["active", "disabled"] }).notNull().default("active"),
+  failedAttempts: integer("failed_attempts").notNull().default(0),
+  lastSignedInAt: text("last_signed_in_at"),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex("idx_delegated_approvers_org_email").on(table.organizationId, table.email),
+  index("idx_delegated_approvers_status").on(table.status),
+]);
+
+export const approvalAssignments = sqliteTable("approval_assignments", {
+  id: text("id").primaryKey(),
+  contractId: text("contract_id").notNull().references(() => contracts.id, { onDelete: "cascade" }),
+  delegatedApproverId: text("delegated_approver_id").notNull().references(() => delegatedApprovers.id, { onDelete: "cascade" }),
+  versionNumber: integer("version_number").notNull(),
+  kind: text("kind", { enum: ["legal", "finance", "security", "business"] }).notNull(),
+  required: integer("required", { mode: "boolean" }).notNull().default(true),
+  status: text("status", { enum: ["pending", "approved", "edits_requested", "revoked", "superseded"] }).notNull().default("pending"),
+  decisionReason: text("decision_reason"),
+  resolvedAt: text("resolved_at"),
+  assignedBy: text("assigned_by").notNull(),
+  ...timestamps,
+}, (table) => [
+  index("idx_approval_assignments_contract_version").on(table.contractId, table.versionNumber),
+  index("idx_approval_assignments_approver_status").on(table.delegatedApproverId, table.status),
+]);
+
+export const approvalInvites = sqliteTable("approval_invites", {
+  id: text("id").primaryKey(),
+  assignmentId: text("assignment_id").notNull().references(() => approvalAssignments.id, { onDelete: "cascade" }),
+  delegatedApproverId: text("delegated_approver_id").notNull().references(() => delegatedApprovers.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),
+  revokedAt: text("revoked_at"),
+  createdBy: text("created_by").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_approval_invites_token_hash").on(table.tokenHash),
+  index("idx_approval_invites_assignment_active").on(table.assignmentId, table.expiresAt, table.usedAt, table.revokedAt),
+]);
+
+export const approverSessions = sqliteTable("approver_sessions", {
+  id: text("id").primaryKey(),
+  delegatedApproverId: text("delegated_approver_id").notNull().references(() => delegatedApprovers.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  lastActiveAt: text("last_active_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  revokedAt: text("revoked_at"),
+  ipHash: text("ip_hash"),
+  userAgentHash: text("user_agent_hash"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_approver_sessions_token_hash").on(table.tokenHash),
+  index("idx_approver_sessions_active").on(table.delegatedApproverId, table.expiresAt, table.revokedAt),
+]);

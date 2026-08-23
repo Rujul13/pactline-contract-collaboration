@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { randomToken, sha256Hex, verifyPassword } from "./security";
 
-const COOKIE_NAME = "__Host-pactline_client";
+const COOKIE_NAME_HOST = "__Host-pactline_client";
+const COOKIE_NAME_DEV = "pactline_client";
 const SESSION_HOURS = 8;
 const DUMMY_PASSWORD_HASH = "pbkdf2-sha256$100000$AAAAAAAAAAAAAAAAAAAAAA$txVYa3yFdETfi3_MgZXwxY9NGktxRMFAMTHU2JXGB6U";
 
@@ -10,7 +11,11 @@ export type ClientSession = { sessionId: string; accountId: string; contractId: 
 
 function cookieValue(request: Request) {
   const cookie = request.headers.get("cookie") ?? "";
-  return cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1) ?? null;
+  const parts = cookie.split(";").map((part) => part.trim());
+  const hostVal = parts.find((part) => part.startsWith(`${COOKIE_NAME_HOST}=`))?.slice(COOKIE_NAME_HOST.length + 1);
+  if (hostVal) return hostVal;
+  const devVal = parts.find((part) => part.startsWith(`${COOKIE_NAME_DEV}=`))?.slice(COOKIE_NAME_DEV.length + 1);
+  return devVal ?? null;
 }
 
 export function hasClientSessionCookie(request: Request) {
@@ -58,9 +63,17 @@ export async function revokeClientSession(request: Request) {
 }
 
 export function clientSessionCookie(token: string, expiresAt: string) {
-  return `${COOKIE_NAME}=${token}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; Secure; SameSite=Strict`;
+  const isDev = process.env.NODE_ENV !== "production";
+  if (isDev) {
+    return `${COOKIE_NAME_DEV}=${token}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; SameSite=Strict`;
+  }
+  return `${COOKIE_NAME_HOST}=${token}; Path=/; Expires=${new Date(expiresAt).toUTCString()}; HttpOnly; Secure; SameSite=Strict`;
 }
 
 export function clearClientSessionCookie() {
-  return `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
+  const isDev = process.env.NODE_ENV !== "production";
+  if (isDev) {
+    return `${COOKIE_NAME_DEV}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`;
+  }
+  return `${COOKIE_NAME_HOST}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
 }
