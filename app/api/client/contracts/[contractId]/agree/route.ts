@@ -8,7 +8,7 @@ export async function POST(request: Request, context: { params: Promise<{ contra
   const { contractId } = await context.params; if (session.contractId !== contractId) return Response.json({ error: "Contract not found" }, { status: 404 });
   try {
     const result = await recordCounterpartyAgreement(contractId, session, request.headers.get("x-request-id") ?? crypto.randomUUID());
-    if (result.locked) await ensureFinalDocument(contractId);
+    if (result.locked) await ensureFinalDocument(contractId).catch((err) => console.error("ensureFinalDocument error:", err));
     return Response.json(result);
   } catch (error) {
     if (error instanceof DomainError) return Response.json({ error: error.message }, { status: error.status });
