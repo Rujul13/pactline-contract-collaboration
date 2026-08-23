@@ -73,7 +73,7 @@ test.describe.serial("owner and reviewer happy path", () => {
     //    guess was wrong because the second click was actually still available
     //    (decision-row buttons stay mounted) but does nothing but reset the
     //    draft, never resolveProposal("counter").
-    await page.goto("/");
+    await page.goto(`/?contract=${DEMO_CONTRACT_ID}`);
     const pendingProposalJump = page.locator(".proposal-card:not(.resolved) .proposal-jump");
     await pendingProposalJump.click();
     await page.getByRole("button", { name: "Counter propose", exact: true }).click();
@@ -129,7 +129,7 @@ test.describe.serial("owner and reviewer happy path", () => {
     // exactly "✓ Approve version" — a literal string, not a template with
     // per-render dynamic text, so an exact match is used per the brief's Step 1
     // guidance rather than the placeholder /Approve version|Agree/ regex.
-    await page.goto("/");
+    await page.goto(`/?contract=${DEMO_CONTRACT_ID}`);
     await page.getByRole("button", { name: "✓ Approve version", exact: true }).click();
     await expect(page.getByText(/agreement is recorded|final document is locked/)).toBeVisible();
     await reviewerPage.reload();

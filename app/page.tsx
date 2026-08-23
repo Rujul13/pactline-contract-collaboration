@@ -1,41 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { diffText, type DiffSegment } from "@/lib/text-diff";
-
-type ContractSummary = { id: string; title: string; status: string; current_version: number; updated_at: string; reviewer_name: string; client_company: string; reviewer_email: string; pending_proposals: number; filename?: string };
-type Block = { id: string; block_key: string; order_index: number; kind: "title" | "heading" | "body"; current_text: string };
-type Proposal = { id: string; block_id: string; base_version: number; original_text: string; proposed_text: string; counter_text?: string; rationale?: string; status: string; created_at: string; username: string; proposed_by_name: string };
-type Party = { id: string; role: "initiator" | "counterparty"; name: string; company: string; email: string };
-type Version = { id: string; version_number: number; created_by: string; document_sha256?: string; created_at: string };
-type Agreement = { party_id: string; version_number: number; agreed_at: string; role: string; name: string };
-type Activity = { id: string; actor_display: string; action: string; target_type: string; version_number?: number; created_at: string };
-type Access = { id: string; username: string; permission: string; status: string; expires_at: string; last_signed_in_at?: string; name: string; email: string };
-type Workspace = { contract: ContractSummary; blocks: Block[]; proposals: Proposal[]; parties: Party[]; documents: Array<{ id: string; filename: string; byte_size: number; sha256: string; scan_status: string; created_at: string }>; versions: Version[]; agreements: Agreement[]; activity: Activity[]; access: Access[] };
-type Credentials = { username: string; password: string; link: string };
-type AiMode = "chat" | "draft_clause" | "rewrite" | "check";
-type AiFinding = { severity: "attention" | "information"; title: string; explanation: string; blockId: string | null; recommendation: string };
-type AiResult = {
-  inScope: boolean;
-  refusalReason: string | null;
-  reply: string;
-  operation: "none" | "insert_clause" | "replace_block";
-  heading: string | null;
-  paragraphs: string[];
-  targetBlockId: string | null;
-  replacementText: string | null;
-  explanation: string | null;
-  assumptions: string[];
-  findings: AiFinding[];
-  model: string;
-  baseVersion: number;
-};
-type AiChatMessage = { id: string; role: "user" | "assistant"; content: string; result?: AiResult };
-type AiDraft = { operation: "insert_clause" | "replace_block"; heading: string; paragraphs: string[]; targetBlockId: string | null; replacementText: string; baseVersion: number };
 
 const DEMO_CONTRACT_ID = "sample-services-agreement";
 const DEMO_USERNAME = "client.reviewer";
 const DEMO_PASSWORD = "ReviewDemo!2026";
+
+type ContractSummary = {
+  id: string;
+  title: string;
+  status: string;
+  current_version: number;
+  locked_at: string | null;
+  updated_at: string;
+  reviewer_name: string | null;
+  client_company: string | null;
+  reviewer_email: string | null;
+  pending_proposals: number;
+  filename: string | null;
+};
+
+type Block = { id: string; block_key: string; order_index: number; kind: "title" | "heading" | "body"; current_text: string };
+type Proposal = { id: string; block_id: string; base_version: number; original_text: string; proposed_text: string; counter_text?: string; rationale?: string; resolution_reason?: string; status: string; created_at: string; accountId: string; author_display: string };
+type Comment = { id: string; block_id: string; parent_comment_id: string | null; author_kind: "owner" | "reviewer"; author_display: string; body: string; status: string; resolution_reason?: string; created_at: string };
+type AccessAccount = { id: string; party_id: string; username: string; permission: string; status: string; expires_at: string };
+type AuditLogEntry = { id: string; actor_display: string; action: string; metadata?: Record<string, unknown>; created_at: string };
+type ReviewRound = { id: string; round_number: number; status: string; deadline_at?: string };
+
+type Workspace = {
+  contract: ContractSummary;
+  blocks: Block[];
+  versions: Array<{ version_number: number; created_at: string; created_by: string | null }>;
+  parties: Array<{ id: string; role: "initiator" | "counterparty"; name: string; company: string; email: string }>;
+  proposals: Proposal[];
+  comments: Comment[];
+  access: AccessAccount[];
+  auditLogs: AuditLogEntry[];
+  reviewRounds: ReviewRound[];
+  agreements: Array<{ party_id: string; version_number: number }>;
+};
+
+type Credentials = { username: string; password?: string; link: string };
+type AiMode = "chat" | "review" | "rewrite" | "insert_clause";
+type AiChatMessage = { id: string; role: "user" | "assistant"; content: string; result?: AiResult };
+type AiDraft = { operation: "replace_paragraph" | "insert_clause"; heading?: string; paragraphs?: string[]; targetBlockId?: string | null; replacementText?: string; baseVersion: number };
+type AiResult = { reply: string; operation: "none" | "replace_paragraph" | "insert_clause"; inScope: boolean; targetBlockId?: string | null; heading?: string; paragraphs?: string[]; replacementText?: string; baseVersion: number };
 
 function titleFromFilename(filename: string) {
   return filename.replace(/\.docx$/i, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -71,6 +82,7 @@ function DiffText({ original, proposed, side }: { original: string; proposed: st
 }
 
 export default function Home() {
+  const router = useRouter();
   const [contracts, setContracts] = useState<ContractSummary[]>([]);
   const [activeId, setActiveId] = useState("");
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -125,7 +137,8 @@ export default function Home() {
     const result = await response.json() as { owner?: { name: string }; contracts?: ContractSummary[]; error?: string; signIn?: string };
     if (!response.ok) { setError(result.error ?? "Unable to open the workspace"); setSignIn(result.signIn ?? ""); setLoading(false); return; }
     const nextContracts = result.contracts ?? []; setContracts(nextContracts);
-    const nextId = preferredId || activeId || nextContracts[0]?.id;
+    const searchId = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("contract") : null;
+    const nextId = preferredId || searchId || activeId || nextContracts[0]?.id;
     if (nextId) await loadContract(nextId); else setLoading(false);
   }, [activeId, loadContract]);
 
@@ -148,55 +161,26 @@ export default function Home() {
   }, [aiMessages, aiOpen, aiBusy]);
 
   useEffect(() => {
-    if (!switcherOpen) return;
-    const closeSwitcher = () => { setSwitcherOpen(false); setNewContractOpen(false); };
-    const handleKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") closeSwitcher(); };
-    const handlePointerDown = (event: PointerEvent) => { if (!switcherRef.current?.contains(event.target as Node)) closeSwitcher(); };
-    document.addEventListener("keydown", handleKeyDown);
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => { document.removeEventListener("keydown", handleKeyDown); document.removeEventListener("pointerdown", handlePointerDown); };
-  }, [switcherOpen]);
+    function handleClickOutside(event: MouseEvent) {
+      if (switcherRef.current && !switcherRef.current.contains(event.target as Node)) setSwitcherOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-  const contract = workspace?.contract;
-  const clientParty = workspace?.parties.find((party) => party.role === "counterparty");
-  const ownerParty = workspace?.parties.find((party) => party.role === "initiator");
-  const pending = workspace?.proposals.filter((proposal) => proposal.status === "pending") ?? [];
-  const selectedProposal = workspace?.proposals.find((proposal) => proposal.id === selectedProposalId) ?? null;
-  const paragraphNumber = useMemo(() => new Map((workspace?.blocks ?? []).map((block, index) => [block.id, index + 1])), [workspace?.blocks]);
-  const ownerAgreed = Boolean(contract && workspace?.agreements.some((agreement) => agreement.role === "initiator" && agreement.version_number === contract.current_version));
-  const clientAgreed = Boolean(contract && workspace?.agreements.some((agreement) => agreement.role === "counterparty" && agreement.version_number === contract.current_version));
-  const locked = contract?.status === "locked";
-  const currentAiMessages = contract ? aiMessages[contract.id] ?? [] : [];
-  const aiTargetBlock = workspace?.blocks.find((block) => block.id === aiDraft?.targetBlockId) ?? null;
-  const aiApplyBlockedReason = locked ? "The final contract is locked." : pending.length ? "Resolve pending client proposals before applying an AI draft." : "";
-
-  async function saveParagraph(block: Block) {
-    if (!contract) return; setBusy(true);
-    const response = await fetch(`/api/contracts/${contract.id}/blocks/${block.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: editDraft, baseVersion: contract.current_version }) });
+  async function updateBlock(blockId: string, text: string) {
+    if (!contract || !text.trim()) return; setBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/blocks/${blockId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ currentText: text.trim() }) });
     const result = await response.json() as { error?: string };
-    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to save the paragraph"); return; }
-    setEditingId(null); announce("Paragraph saved in a new immutable version."); await loadWorkspace(contract.id);
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to update paragraph"); return; }
+    setEditingId(null); announce("Paragraph updated."); await loadWorkspace(contract.id);
   }
 
-  function focusProposal(proposal: Proposal) {
-    setTab("document"); setRail("proposals"); setSidebarView("queue"); setSelectedProposalId(proposal.id); setEditingId(null);
-    window.setTimeout(() => document.getElementById(`paragraph-${proposal.block_id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
-  }
-
-  async function openReviewQueue() {
-    setSidebarView("queue"); setRail("proposals"); setTab("document"); setSwitcherOpen(false);
-    const queuedContract = contracts.find((item) => Number(item.pending_proposals) > 0);
-    if (!queuedContract) { announce("The review queue is clear."); return; }
-    if (queuedContract.id !== activeId) await loadContract(queuedContract.id);
-  }
-
-  async function resolveProposal(proposal: Proposal, action: "accept" | "reject" | "counter") {
-    if (!contract) return; setBusy(true);
-    const resolutionReason = decisionReason.trim() || window.prompt(`Reason for ${action === "counter" ? "countering" : `${action}ing`} this change:`)?.trim() || "";
-    if (resolutionReason.length < 3) { setBusy(false); announce("A reason is required before resolving this proposal."); return; }
-    const response = await fetch(`/api/contracts/${contract.id}/paragraph-proposals/${proposal.id}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, counterText: action === "counter" ? counterDraft : undefined, reason: resolutionReason }) });
+  async function resolveProposal(proposalId: string, action: "accept" | "reject" | "counter", counterText?: string) {
+    if (!contract || !decisionReason.trim()) return; setBusy(true);
+    const response = await fetch(`/api/contracts/${contract.id}/paragraph-proposals/${proposalId}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, counterText, reason: decisionReason.trim() }) });
     const result = await response.json() as { error?: string };
-    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to resolve the proposal"); return; }
+    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to resolve proposal"); return; }
     setCounteringId(null); setCounterDraft(""); setDecisionReason(""); setSelectedProposalId(null);
     announce(action === "accept" ? "Change accepted into a new version." : action === "counter" ? "Counterproposal sent back to the reviewer." : "Change rejected and recorded."); await loadWorkspace(contract.id);
   }
@@ -278,73 +262,114 @@ export default function Home() {
     setAiBusy(true);
     const response = await fetch(`/api/contracts/${contract.id}/ai-suggestions/apply`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ baseVersion: aiDraft.baseVersion, operation: aiDraft.operation, targetBlockId: aiDraft.targetBlockId, afterBlockId: aiDraft.targetBlockId, heading: aiDraft.heading, paragraphs: aiDraft.paragraphs, replacementText: aiDraft.replacementText }) });
     const result = await response.json() as { versionNumber?: number; error?: string };
-    setAiBusy(false);
-    if (!response.ok) { announce(result.error ?? "Unable to apply the AI draft"); return; }
-    setAiDraft(null); announce(`AI draft applied as version ${result.versionNumber}.`); await loadWorkspace(contract.id);
+    setAiBusy(false); if (!response.ok) { announce(result.error ?? "Unable to apply AI changes"); return; }
+    setAiDraft(null); announce(`AI changes applied as Version ${result.versionNumber ?? contract.current_version + 1}.`); await loadWorkspace(contract.id);
   }
 
-  function focusAiFinding(finding: AiFinding) {
-    if (!finding.blockId) return;
-    setTab("document"); window.setTimeout(() => document.getElementById(`paragraph-${finding.blockId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+  function downloadFinalDocx() {
+    if (!contract) return;
+    const anchor = document.createElement("a"); anchor.href = `/api/contracts/${contract.id}/download`; anchor.click(); announce("Downloading final agreed Word document.");
   }
 
-  async function resetDemo() {
-    if (!contract || contract.id !== DEMO_CONTRACT_ID || !window.confirm("Reset the generic demo contract and remove its demonstration edits?")) return;
-    setBusy(true); const response = await fetch("/api/demo/reset", { method: "POST" }); const result = await response.json() as { error?: string };
-    setBusy(false); if (!response.ok) { announce(result.error ?? "Unable to reset the demo"); return; }
-    announce("The generic demo has been restored."); await loadWorkspace(DEMO_CONTRACT_ID);
-  }
+  if (signIn) return <main className="portal-container"><div className="portal-card"><h1>Authentication Required</h1><p>Your session expired or you need to sign in to access the contract workspace.</p><a className="portal-button" href={signIn}>Sign in to Pactline</a></div></main>;
+  if (loading && !workspace) return <main className="shell-workspace"><div className="loading-state"><span className="spinner-mark"/>Loading contract workspace…</div></main>;
+  if (error || !workspace) return <main className="shell-workspace"><div className="error-state"><h1>Workspace unavailable</h1><p>{error || "No contract found"}</p></div></main>;
 
-  async function copy(value: string, label: string) { await navigator.clipboard.writeText(value); announce(`${label} copied.`); }
-  function download(url: string) { const anchor = document.createElement("a"); anchor.href = url; anchor.click(); }
+  const contract = workspace.contract;
+  const locked = contract.status === "locked";
+  const initiatorParty = workspace.parties.find((party) => party.role === "initiator");
+  const clientParty = workspace.parties.find((party) => party.role === "counterparty");
+  const pendingProposals = workspace.proposals.filter((proposal) => proposal.status === "pending");
+  const ownerAgreed = workspace.agreements.some((agreement) => agreement.party_id === initiatorParty?.id && agreement.version_number === contract.current_version);
+  const clientAgreed = workspace.agreements.some((agreement) => agreement.party_id === clientParty?.id && agreement.version_number === contract.current_version);
+  const selectedProposal = workspace.proposals.find((proposal) => proposal.id === selectedProposalId);
+  const blockMap = new Map(workspace.blocks.map((block) => [block.id, block]));
+  const currentMessages = aiMessages[contract.id] ?? [];
+  const targetBlock = aiTargetBlockId ? blockMap.get(aiTargetBlockId) : null;
 
-  if (error && !workspace) return <main className="review-portal"><section className="portal-card"><span className="brand-mark">P</span><h1>Pactline</h1><p>{error}</p>{signIn && <a className="primary-link" href={signIn}>Sign in as contract owner</a>}<button onClick={() => void loadWorkspace()}>Try again</button></section></main>;
-  if (loading && !workspace) return <main className="review-portal"><section className="portal-card"><span className="portal-spinner"/><p>Preparing your contract workspace…</p></section></main>;
+  return <div className="workspace-layout">
+    {toast && <div className="toast-notification" role="status">{toast}</div>}
+    <header className="app-header">
+      <div className="brand-group"><span className="brand-mark">P</span><div><strong className="brand-title">Pactline</strong><span className="brand-subtitle">Contract Collaboration</span></div></div>
+      <div className="switcher-wrapper" ref={switcherRef}>
+        <button className="switcher-trigger" onClick={() => setSwitcherOpen(!switcherOpen)}><span>{contract.title}</span><small>v{contract.current_version} · {locked ? "Locked" : contract.status}</small><span className="chevron">▾</span></button>
+        {switcherOpen && <div className="switcher-dropdown">
+          <div className="switcher-header"><span>Your contracts</span><button className="new-contract-btn" onClick={() => { setNewContractOpen(true); setSwitcherOpen(false); }}>+ New</button></div>
+          <div className="switcher-list">{contracts.map((item) => <button key={item.id} className={`switcher-item ${item.id === contract.id ? "active" : ""}`} onClick={() => { void loadContract(item.id); setSwitcherOpen(false); }}><div><strong>{item.title}</strong><small>{item.client_company ?? "Client"} · Version {item.current_version}</small></div><span className={`status-pill ${item.status}`}>{item.status}</span></button>)}</div>
+        </div>}
+      </div>
+      <nav className="header-actions">
+        <button className="action-btn ai-btn" onClick={() => openAi("chat")}>✨ AI Assistant</button>
+        <button className="action-btn workflow-btn" onClick={() => router.push(`/workflow/${contract.id}`)}>Workflow & Approvals</button>
+        <button className="action-btn share-btn" onClick={() => void createAccess()}>🔗 Share with reviewer</button>
+        <input type="file" ref={fileRef} accept=".docx" style={{ display: "none" }} onChange={(event) => void uploadVersion(event.target.files?.[0])}/>
+        <button className="action-btn upload-btn" disabled={busy || locked} onClick={() => fileRef.current?.click()}>📄 Import new .docx</button>
+      </nav>
+    </header>
 
-  return <main className="app-shell document-workspace">
-    <aside className="sidebar"><div className="brand"><span className="brand-mark">P</span><span>Pactline</span></div><nav aria-label="Main navigation"><button className={`nav-item ${sidebarView === "contracts" ? "active" : ""}`} onClick={() => { setSidebarView("contracts"); setSwitcherOpen(true); }}><span>⌂</span> Contracts <b>{contracts.length}</b></button><button className={`nav-item ${sidebarView === "queue" ? "active" : ""}`} onClick={() => void openReviewQueue()}><span>✓</span> Review queue <b>{contracts.reduce((sum, item) => sum + Number(item.pending_proposals), 0)}</b></button><button className={`nav-item ${sidebarView === "activity" ? "active" : ""}`} onClick={() => { setSidebarView("activity"); setTab("activity"); setSwitcherOpen(false); }}><span>◴</span> Activity</button><a className="nav-item" href="/manage"><span>◇</span> Portfolio <b>V2</b></a></nav><div className="sidebar-bottom"><div className="user"><span className="avatar">CO</span><div><strong>Contract Owner</strong><small>Personal workspace</small></div></div></div></aside>
-    <section className="workspace">
-      <header className="topbar"><div className="contract-switcher-wrap" ref={switcherRef}><div className="crumb"><button className="crumb-back" onClick={() => setSwitcherOpen(true)}>All contracts</button><b>/</b><button className="contract-switcher-button" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen((value) => !value)}><strong>{contract?.title ?? "Contract"}</strong><span>⌄</span></button></div>{switcherOpen && <section className="company-switcher compact-switcher" role="dialog" aria-label="Choose contract"><div className="company-detail"><div className="switcher-heading"><div><small>Personal workspace</small><h2>Contracts</h2></div><div className="switcher-actions"><button className="upload-contract-button" onClick={() => setNewContractOpen(true)}>+ New contract</button><button className="switcher-close" aria-label="Close contract switcher" onClick={() => { setSwitcherOpen(false); setNewContractOpen(false); }}>×</button></div></div>{newContractOpen && <div className="contract-upload-form"><label>Contract name<input value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="e.g. Consulting Agreement" /></label><label className="file-drop">Word document<input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => { const file = event.target.files?.[0] ?? null; setNewFile(file); if (file && !newTitle.trim()) setNewTitle(titleFromFilename(file.name)); }} /><span>{newFile?.name ?? "Choose a .docx file"}</span></label><div><button onClick={() => { setNewContractOpen(false); setNewFile(null); setNewTitle(""); }}>Cancel</button><button className="primary" disabled={busy || !newTitle.trim() || !newFile} onClick={() => void createContract()}>{busy ? "Uploading…" : "Upload and create"}</button></div></div>}<div className="switcher-section">{contracts.map((item) => <button className={`contract-option ${item.id === activeId ? "active" : ""}`} key={item.id} onClick={() => { setSwitcherOpen(false); void loadContract(item.id); }}><span className="word-icon">W</span><span><strong>{item.title}</strong><small>{item.client_company} · Version {item.current_version}</small></span><em>{item.status}</em></button>)}</div></div></section>}</div><div className="top-actions"><span className="saved">✓ Persisted</span><a className="client-preview-button" href={contract ? `/review/${contract.id}` : "#"} target="_blank">Open client view</a><button className="word-export" onClick={() => contract && download(`/api/contracts/${contract.id}/download`)}><span className="word-icon">W</span> {contract?.id === DEMO_CONTRACT_ID ? "Download demo DOCX" : "Download"}</button><button className="share-button" disabled={busy || !contract} onClick={() => void createAccess()}>Share access <span>↗</span></button></div></header>
+    <div className="workspace-body">
+      <aside className="sidebar-rail">
+        <nav className="sidebar-nav">
+          <button className={sidebarView === "contracts" ? "active" : ""} onClick={() => setSidebarView("contracts")}>📁 Contracts ({contracts.length})</button>
+          <button className={sidebarView === "queue" ? "active" : ""} onClick={() => setSidebarView("queue")}>📬 Review queue ({pendingProposals.length})</button>
+          <button className={sidebarView === "activity" ? "active" : ""} onClick={() => setSidebarView("activity")}>📜 Activity</button>
+        </nav>
+        {sidebarView === "contracts" && <div className="sidebar-list">{contracts.map((item) => <article key={item.id} className={`sidebar-card ${item.id === contract.id ? "active" : ""}`} onClick={() => void loadContract(item.id)}><h3>{item.title}</h3><p>{item.client_company ?? "Client"} · Version {item.current_version}</p><span className={`status-tag ${item.status}`}>{item.status}</span></article>)}</div>}
+        {sidebarView === "queue" && <div className="sidebar-list">{pendingProposals.length ? pendingProposals.map((proposal) => <article key={proposal.id} className={`sidebar-card ${proposal.id === selectedProposalId ? "active" : ""}`} onClick={() => { setSelectedProposalId(proposal.id); setRail("proposals"); }}><h3>Paragraph {blockMap.get(proposal.block_id)?.order_index ? blockMap.get(proposal.block_id)!.order_index + 1 : "—"}</h3><p>Proposed by {proposal.author_display}</p><small>{new Date(proposal.created_at).toLocaleTimeString()}</small></article>) : <p className="empty-rail">No pending proposals awaiting your decision.</p>}</div>}
+        {sidebarView === "activity" && <div className="sidebar-list">{workspace.auditLogs.slice(0, 15).map((log) => <article key={log.id} className="activity-card"><strong>{log.actor_display}</strong><span>{readableAction(log.action)}</span><small>{new Date(log.created_at).toLocaleString()}</small></article>)}</div>}
+      </aside>
 
-      <div className="contract-header"><div><div className="title-row"><h1>{contract?.title}</h1><span className={`status-pill ${locked ? "locked-pill" : ""}`}><i /> {locked ? "Agreed and locked" : contract?.status}</span></div><p>{ownerParty?.company ?? "Owner Company"} <span>↔</span> {clientParty?.company ?? "Client Company"} <b>•</b> Version {contract?.current_version}</p></div><div className="people"><span className="person-avatar p1">CO</span><span className="person-avatar p2">CR</span><div><strong>2 parties</strong><small>Every action attributed</small></div></div></div>
+      <main className="document-stage">
+        <header className="stage-header">
+          <div><h1 className="document-title">{contract.title}</h1><div className="document-meta"><span>Version {contract.current_version}</span><span>·</span><span>{locked ? "Final agreed document" : "Editable workspace"}</span><span>·</span><span>{workspace.blocks.length} paragraphs</span></div></div>
+          <div className="stage-controls">
+            <div className="tab-group"><button className={tab === "document" ? "active" : ""} onClick={() => setTab("document")}>Document</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Versions ({workspace.versions.length})</button><button className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Audit Log</button></div>
+            {locked ? <button className="agree-btn locked" onClick={downloadFinalDocx}>🔒 Download final DOCX</button> : <button className={`agree-btn ${ownerAgreed ? "agreed" : ""}`} disabled={busy || pendingProposals.length > 0} onClick={() => void agreeAsOwner()}>{ownerAgreed ? "✓ Owner approved" : clientAgreed ? "🔒 Lock version" : "✓ Approve version"}</button>}
+          </div>
+        </header>
 
-      <div className="progress-wrap"><div className="progress-line">{[["Drafted",true],["Shared",locked || Boolean(workspace?.access.length)],["Negotiating",locked],["Owner agreed",locked || ownerAgreed],["Final agreement",locked]].map(([label,done],index) => { const current = label === "Negotiating" && !locked; return <div className={`step ${done ? "done" : current ? "current" : ""}`} key={String(label)}><span>{done ? "✓" : index + 1}</span><div><strong>{label}</strong><small>{label === "Negotiating" && current ? `${pending.length} open` : done ? "Complete" : "Waiting"}</small></div></div>; })}</div></div>
+        {tab === "document" && <div className="word-editor-stage"><div className="word-page"><div className="document-flow">
+          {workspace.blocks.map((block, index) => {
+            const editing = editingId === block.id; const proposalsForBlock = workspace.proposals.filter((p) => p.block_id === block.id); const pendingForBlock = proposalsForBlock.find((p) => p.status === "pending");
+            return <section className={`doc-paragraph ${block.kind} ${pendingForBlock ? "has-proposal" : ""}`} key={block.id}>
+              <span className="paragraph-num">{index + 1}</span>
+              {editing ? <div className="paragraph-editor"><label htmlFor={`edit-block-${block.id}`}>Edit paragraph text</label><textarea id={`edit-block-${block.id}`} value={editDraft} onChange={(e) => setEditDraft(e.target.value)} rows={Math.max(3, Math.ceil(editDraft.length / 85))} autoFocus/><div><button disabled={busy} onClick={() => void updateBlock(block.id, editDraft)}>Save change</button><button className="discard" onClick={() => setEditingId(null)}>Cancel</button></div></div> : <div className="paragraph-content" onClick={() => { if (!locked) { setEditingId(block.id); setEditDraft(block.current_text); } }}><span>{block.current_text}</span>{!locked && <button className="edit-hover-btn" title="Edit text">✎ Edit</button>}</div>}
+              {!locked && <button className="ai-rewrite-btn" title="Rewrite with AI" onClick={() => openAi("rewrite", block.id)}>✨ AI</button>}
+              {pendingForBlock && <div className="inline-proposal-banner" onClick={() => { setSelectedProposalId(pendingForBlock.id); setRail("proposals"); }}><span>Reviewer proposed a change</span><button>View proposal →</button></div>}
+            </section>;
+          })}
+        </div></div></div>}
 
-      <div className="content-grid"><section className="document-panel"><div className="tabs"><button className={tab === "document" ? "active" : ""} onClick={() => setTab("document")}>Document</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Version history <span>{workspace?.versions.length ?? 0}</span></button><button className={tab === "activity" ? "active" : ""} onClick={() => setTab("activity")}>Audit activity</button>{contract && <a className="workflow-link" href={`/workflow/${contract.id}`}>Lifecycle & redlines</a>}<button className={`owner-lock-button ${clientAgreed && !ownerAgreed ? "ready" : ""}`} disabled={busy || locked || ownerAgreed || pending.length > 0} title={pending.length ? "Resolve every pending proposal first" : clientAgreed ? "The client approved this version; your approval will lock it" : "Approve this version and wait for the client"} onClick={() => void agreeAsOwner()}>{locked ? "🔒 Locked" : ownerAgreed ? "✓ Owner approved" : clientAgreed ? "🔒 Lock version" : "✓ Approve version"}</button><div className="version-select">Version {contract?.current_version}</div></div>
-        <div className="word-bar"><div className="word-file"><span className="word-icon">W</span><div><strong>{workspace?.documents[0]?.filename ?? `${contract?.title}.docx`}</strong><small>{contract?.id === DEMO_CONTRACT_ID ? "Editable demo MSA · Safe to reset after every presentation" : "Private Word document · Paragraph review · Immutable versions"}</small></div><span className="synced">✓ Stored</span></div><div className="word-controls"><label className="import-word" aria-disabled={busy || locked}>↑ {contract?.id === DEMO_CONTRACT_ID ? "Upload your DOCX" : "Upload new version"}<input ref={fileRef} type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={busy || locked} onChange={(event) => void uploadVersion(event.target.files?.[0])} /></label><button onClick={() => contract && download(`/api/contracts/${contract.id}/download`)}>{contract?.id === DEMO_CONTRACT_ID ? "Download demo" : "Download"}</button></div></div>
-        {tab === "document" && <div className="word-page"><div className="word-page-meta"><span>{locked ? "Final agreed document" : "Editable working document"}</span><span>{workspace?.blocks.length ?? 0} paragraphs</span></div><div className="document-flow">{workspace?.blocks.map((block) => { const reviewing = selectedProposal?.block_id === block.id ? selectedProposal : null; return <section id={`paragraph-${block.id}`} className={`doc-paragraph ${block.kind} ${reviewing ? "proposal-target" : ""}`} key={block.id}>{editingId === block.id ? <div className="paragraph-editor"><label htmlFor={`block-${block.id}`}>Edit paragraph</label><textarea id={`block-${block.id}`} value={editDraft} onChange={(event) => setEditDraft(event.target.value)} rows={Math.max(3, Math.ceil(editDraft.length / 85))} autoFocus/><div><button onClick={() => setEditingId(null)}>Cancel</button><button className="primary" disabled={busy || !editDraft.trim() || editDraft.trim() === block.current_text} onClick={() => void saveParagraph(block)}>Save new version</button></div></div> : <button className="paragraph-content" disabled={locked || Boolean(reviewing)} aria-label={`Edit paragraph ${paragraphNumber.get(block.id)}`} onClick={() => { setEditingId(block.id); setEditDraft(block.current_text); }}><span>{block.current_text}</span><i>{reviewing ? "In review" : locked ? "Locked" : "Edit"}</i></button>}{reviewing && <div className="inline-proposal-review" aria-live="polite"><div className="inline-review-heading"><div><strong>Client proposal · Paragraph {paragraphNumber.get(block.id)}</strong><span>Only changed words are highlighted below</span></div><button aria-label="Close proposal comparison" onClick={() => { setSelectedProposalId(null); setCounteringId(null); }}>×</button></div><div className="inline-diff"><div className="current-version"><b>Current version</b><p><DiffText original={reviewing.original_text} proposed={reviewing.proposed_text} side="original"/></p></div><div className="proposed-version"><b>Client proposed</b><p><DiffText original={reviewing.original_text} proposed={reviewing.proposed_text} side="proposed"/></p></div></div>{reviewing.status === "pending" && <><div className="inline-decision-row"><button className="accept" disabled={busy} onClick={() => void resolveProposal(reviewing, "accept")}>✓ Accept change</button><button className="counter" disabled={busy} onClick={() => { setCounteringId(reviewing.id); setCounterDraft(reviewing.proposed_text); }}>Counter propose</button><button className="reject" disabled={busy} onClick={() => void resolveProposal(reviewing, "reject")}>Reject change</button></div>{counteringId === reviewing.id && <div className="counter-editor"><label htmlFor={`counter-${reviewing.id}`}>Your counterproposal</label><p>Revise the client’s language below. This will be sent back as the next negotiation position.</p><textarea id={`counter-${reviewing.id}`} value={counterDraft} onChange={(event) => setCounterDraft(event.target.value)} rows={Math.max(4, Math.ceil(counterDraft.length / 85))} autoFocus/><div><button onClick={() => { setCounteringId(null); setCounterDraft(""); }}>Cancel</button><button className="primary" disabled={busy || counterDraft.trim().length < 10 || counterDraft.trim() === reviewing.original_text || counterDraft.trim() === reviewing.proposed_text} onClick={() => void resolveProposal(reviewing, "counter")}>Send counterproposal</button></div></div>}</>}</div>}</section>; })}</div></div>}
-        {tab === "history" && <div className="empty-tab"><h2>Version history</h2><p>Every accepted change and owner edit creates a complete immutable snapshot.</p>{workspace?.versions.map((version) => <div className="history-row" key={version.id}><span className="version-dot">v{version.version_number}</span><div><strong>{version.version_number === contract?.current_version ? "Current document" : "Previous document version"}</strong><small>{new Date(version.created_at).toLocaleString()} · {version.document_sha256 ? "File checksum stored" : "Paragraph snapshot stored"}</small></div></div>)}</div>}
-        {tab === "activity" && <div className="empty-tab"><h2>Audit activity</h2><p>Uploads, edits, proposals, decisions, agreements, and downloads are attributed.</p>{workspace?.activity.map((item) => <div className="activity-row" key={item.id}><span>{item.actor_display.split(" ").map((part) => part[0]).join("").slice(0,2)}</span><div><strong>{item.actor_display} {readableAction(item.action)}</strong><small>{new Date(item.created_at).toLocaleString()}{item.version_number ? ` · Version ${item.version_number}` : ""}</small></div></div>)}</div>}
-      </section>
+        {tab === "history" && <section className="versions-table"><h2>Version history</h2><table><thead><tr><th>Version</th><th>Created at</th><th>Created by</th><th>Status</th></tr></thead><tbody>{workspace.versions.map((v) => <tr key={v.version_number}><td>Version {v.version_number}</td><td>{new Date(v.created_at).toLocaleString()}</td><td>{v.created_by ?? "Owner"}</td><td>{v.version_number === contract.current_version ? (locked ? "Locked" : "Current") : "Historical"}</td></tr>)}</tbody></table></section>}
 
-      <aside className="review-rail"><div className="rail-tabs"><button className={rail === "proposals" ? "active" : ""} onClick={() => setRail("proposals")}>Proposed edits <span>{pending.length}</span></button><button className={rail === "details" ? "active" : ""} onClick={() => setRail("details")}>Details</button></div>{rail === "proposals" ? <><div className="rail-heading"><div><h2>Client changes</h2><p>Changed words are highlighted for quick review</p></div></div><div className="proposal-scroll">{!workspace?.proposals.length && <div className="all-clear"><span>✓</span><h3>No proposed edits yet</h3><p>Share client access to begin a review round.</p></div>}{workspace?.proposals.map((proposal) => <article className={`proposal-card ${proposal.status !== "pending" ? "resolved" : ""} ${selectedProposalId === proposal.id ? "selected" : ""}`} key={proposal.id}><div className="proposal-meta"><span className="mini-avatar">CR</span><div><strong>{proposal.proposed_by_name}</strong><small>{proposal.username} · {new Date(proposal.created_at).toLocaleString()}</small></div><span className={proposal.status === "pending" ? "pending-dot" : `status-text ${proposal.status}`}>{proposal.status}</span></div><button className="proposal-jump" onClick={() => focusProposal(proposal)}><span>Paragraph {paragraphNumber.get(proposal.block_id)} edited</span><b>View in document →</b></button><div className="diff"><div className="removed"><span>−</span><p><DiffText original={proposal.original_text} proposed={proposal.proposed_text} side="original"/></p></div><div className="added"><span>+</span><p><DiffText original={proposal.original_text} proposed={proposal.proposed_text} side="proposed"/></p></div>{proposal.counter_text && <div className="countered-version"><span>↔</span><p><b>Owner counter:</b> {proposal.counter_text}</p></div>}</div>{proposal.status === "pending" && <div className="decision-row"><button className="accept" disabled={busy} onClick={() => void resolveProposal(proposal, "accept")}>✓ Accept</button><button className="counter" disabled={busy} onClick={() => { focusProposal(proposal); setCounteringId(proposal.id); setCounterDraft(proposal.proposed_text); }}>Counter</button><button className="reject" disabled={busy} onClick={() => void resolveProposal(proposal, "reject")}>Reject</button></div>}</article>)}</div></> : <div className="details-panel"><h2>Document details</h2><dl><dt>Owner</dt><dd>{ownerParty?.name}<br/><small>{ownerParty?.company}</small></dd><dt>Reviewer</dt><dd>{clientParty?.name}<br/><small>{clientParty?.email}</small></dd><dt>Source</dt><dd>{workspace?.documents[0]?.filename}<br/><small>Private object storage · Unscanned MVP file</small></dd><dt>Version</dt><dd>Version {contract?.current_version}<br/><small>{workspace?.versions.length} immutable snapshots</small></dd><dt>Owner agreement</dt><dd>{ownerAgreed ? "Recorded" : "Waiting"}</dd><dt>Client agreement</dt><dd>{clientAgreed ? "Recorded" : "Waiting"}</dd></dl><div className="agreement-panel"><strong>{locked ? "Final agreement complete" : clientAgreed ? "Client approved this version" : "Ready to agree?"}</strong><p>{locked ? "This version is locked. Both parties can download the same final Word document." : pending.length ? "Resolve every pending proposal before agreeing." : clientAgreed ? "Lock this exact version by adding the owner’s approval." : "Your approval applies only to the current version and resets if the document changes."}</p><button className="agreement-button" disabled={busy || locked || ownerAgreed || pending.length > 0} onClick={() => void agreeAsOwner()}>{ownerAgreed ? "Owner approval recorded" : clientAgreed ? "Lock this version" : "Approve this version"}</button>{locked && <button className="secondary-download" onClick={() => contract && download(`/api/contracts/${contract.id}/download`)}>Download final DOCX</button>}</div>{contract?.id === DEMO_CONTRACT_ID && <button className="reset-demo-button" disabled={busy} onClick={() => void resetDemo()}>Reset generic demo</button>}</div>}</aside></div>
-    </section>
+        {tab === "activity" && <section className="activity-table"><h2>Audit trail</h2><table><thead><tr><th>Actor</th><th>Action</th><th>Target</th><th>Timestamp</th></tr></thead><tbody>{workspace.auditLogs.map((log) => <tr key={log.id}><td>{log.actor_display}</td><td>{readableAction(log.action)}</td><td>{log.id.slice(0, 8)}</td><td>{new Date(log.created_at).toLocaleString()}</td></tr>)}</tbody></table></section>}
+      </main>
 
-    {shareOpen && credentials && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareOpen(false); }}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><button className="modal-close" aria-label="Close sharing dialog" onClick={() => setShareOpen(false)}>×</button><div className="modal-kicker">🔒 Named, password-protected review</div><h2 id="share-title">Share with Client Reviewer</h2><p className="modal-lead">The reviewer can propose paragraph edits and agree to the final version. They cannot overwrite the owner document.</p><div className="access-identity"><span className="client-avatar">CR</span><div><strong>{clientParty?.name}</strong><small>{clientParty?.email} · {clientParty?.company}</small></div><span className="access-role">Reviewer</span></div><div className="credential-grid"><label><span>Secure contract link</span><div><code>{credentials.link}</code><button onClick={() => void copy(credentials.link, "Link")}>Copy</button></div></label><label><span>Username</span><div><code>{credentials.username}</code><button onClick={() => void copy(credentials.username, "Username")}>Copy</button></div></label><label><span>Temporary password</span><div><code>{passwordVisible ? credentials.password : "••••••••••••••••"}</code><button onClick={() => setPasswordVisible((value) => !value)}>{passwordVisible ? "Hide" : "Show"}</button></div></label></div><div className="modal-actions"><a className="preview-login" href={credentials.link} target="_blank">Open client login</a><button className="copy-package" onClick={() => void copy(`Contract: ${credentials.link}\nUsername: ${credentials.username}\nPassword: ${credentials.password}`, "Access package")}>Copy access package</button></div></section></div>}
-    <button className={`ai-launcher ${aiOpen ? "open" : ""}`} aria-label="Open AI contract assistant" aria-expanded={aiOpen} onClick={() => aiOpen ? setAiOpen(false) : openAi()}><span>✦</span>{aiOpen ? "Close assistant" : "Ask AI"}</button>
-    {aiOpen && <aside className="ai-drawer" role="dialog" aria-modal="false" aria-labelledby="ai-title">
-      <header className="ai-drawer-header"><div><span className="ai-spark">✦</span><div><h2 id="ai-title">Contract assistant</h2><p>Owner workspace · Groq-powered</p></div></div><button aria-label="Close AI assistant" onClick={() => setAiOpen(false)}>×</button></header>
-      {!aiAcknowledged ? <section className="ai-disclosure"><span className="ai-disclosure-icon">↗</span><h3>Before you begin</h3><p>Your current contract text and messages will be sent to Groq to generate a response. Pactline does not save this chat or the prompt in its audit log.</p><p className="ai-legal-note">AI output may be inaccurate and is not legal advice. You review every draft before it changes the document.</p><button onClick={() => setAiAcknowledged(true)}>I understand and continue</button></section> : <>
-        <div className="ai-quick-actions" aria-label="AI actions">
-          <button className={aiMode === "chat" ? "active" : ""} onClick={() => { setAiMode("chat"); setAiTargetBlockId(null); }}>Discuss</button>
-          <button className={aiMode === "draft_clause" ? "active" : ""} onClick={() => { setAiMode("draft_clause"); setAiTargetBlockId(null); setAiInput("Draft a clause that "); }}>Draft clause</button>
-          <button className={aiMode === "rewrite" ? "active" : ""} onClick={() => setAiMode("rewrite")}>Rewrite</button>
-          <button className={aiMode === "check" ? "active" : ""} onClick={() => { setAiMode("check"); setAiTargetBlockId(null); setAiInput("Check this contract for ambiguity, missing terms, and commercial risk."); }}>Check document</button>
-        </div>
-        {aiMode === "rewrite" && <label className="ai-target-select">Paragraph to rewrite<select value={aiTargetBlockId ?? ""} onChange={(event) => setAiTargetBlockId(event.target.value || null)}><option value="">Choose a paragraph</option>{workspace?.blocks.filter((block) => block.kind !== "title").map((block) => <option value={block.id} key={block.id}>{paragraphNumber.get(block.id)}. {block.current_text.slice(0, 64)}</option>)}</select></label>}
-        <div className="ai-conversation">
-          {!currentAiMessages.length && <div className="ai-empty"><span>✦</span><h3>Work through contract language</h3><p>Ask a question, draft a new clause, rewrite a paragraph, or run a document check. Nothing is applied automatically.</p></div>}
-          {currentAiMessages.map((message) => <article className={`ai-message ${message.role}`} key={message.id}><small>{message.role === "user" ? "You" : "Assistant"}</small><p>{message.content}</p>{message.result?.findings?.length ? <div className="ai-findings">{message.result.findings.map((finding, index) => <button key={`${message.id}-${index}`} onClick={() => focusAiFinding(finding)} disabled={!finding.blockId}><span className={`severity ${finding.severity}`}>{finding.severity}</span><strong>{finding.title}</strong><p>{finding.explanation} {finding.recommendation}</p>{finding.blockId && <em>View paragraph →</em>}</button>)}</div> : null}</article>)}
-          {aiBusy && <div className="ai-thinking"><i/><i/><i/><span>Reviewing the contract</span></div>}
-          <div ref={aiMessagesEndRef}/>
-        </div>
-        {aiDraft && <section className="ai-draft-card"><div className="ai-draft-heading"><div><span>Editable preview</span><strong>{aiDraft.operation === "replace_block" ? "Paragraph rewrite" : "New clause"}</strong></div><button aria-label="Discard AI draft" onClick={() => setAiDraft(null)}>×</button></div>
-          {aiDraft.operation === "replace_block" ? <div className="ai-rewrite-preview"><label>Current version<p>{aiTargetBlock?.current_text ?? "Selected paragraph"}</p></label><label>Proposed version<textarea value={aiDraft.replacementText} onChange={(event) => setAiDraft({ ...aiDraft, replacementText: event.target.value })} rows={Math.max(5, Math.ceil(aiDraft.replacementText.length / 55))}/></label></div> : <div className="ai-clause-preview"><label>Clause heading<input value={aiDraft.heading} onChange={(event) => setAiDraft({ ...aiDraft, heading: event.target.value })}/></label>{aiDraft.paragraphs.map((paragraph, index) => <label key={index}>Paragraph {index + 1}<textarea value={paragraph} onChange={(event) => setAiDraft({ ...aiDraft, paragraphs: aiDraft.paragraphs.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} rows={Math.max(4, Math.ceil(paragraph.length / 55))}/></label>)}<label>Place after<select value={aiDraft.targetBlockId ?? ""} onChange={(event) => setAiDraft({ ...aiDraft, targetBlockId: event.target.value || null })}><option value="">End of document</option>{workspace?.blocks.map((block) => <option value={block.id} key={block.id}>{paragraphNumber.get(block.id)}. {block.current_text.slice(0, 58)}</option>)}</select></label></div>}
-          {aiApplyBlockedReason && <p className="ai-apply-warning">{aiApplyBlockedReason}</p>}<button className="ai-apply" disabled={aiBusy || Boolean(aiApplyBlockedReason) || (aiDraft.operation === "replace_block" ? aiDraft.replacementText.trim().length < 10 : !aiDraft.heading.trim() || !aiDraft.paragraphs.some((paragraph) => paragraph.trim().length >= 10))} onClick={() => void applyAiDraft()}>Apply as new version</button><small>Creates an immutable version and audit entry. The prompt and chat remain session-only.</small>
-        </section>}
-        <form className="ai-composer" onSubmit={(event) => { event.preventDefault(); void sendAiMessage(); }}><textarea value={aiInput} maxLength={4000} onChange={(event) => setAiInput(event.target.value)} placeholder={aiMode === "draft_clause" ? "Describe the clause you need…" : aiMode === "rewrite" ? "How should this paragraph change?" : aiMode === "check" ? "What should the review focus on?" : "Ask about this contract…"} rows={3}/><div><span>{aiInput.length}/4000 · not legal advice</span><button disabled={aiBusy || !aiInput.trim() || (aiMode === "rewrite" && !aiTargetBlockId)} aria-label="Send message">↑</button></div></form>
-      </>}
+      <aside className="detail-rail">
+        <nav className="rail-tabs"><button className={rail === "proposals" ? "active" : ""} onClick={() => setRail("proposals")}>Proposals ({pendingProposals.length})</button><button className={rail === "details" ? "active" : ""} onClick={() => setRail("details")}>Contract details</button></nav>
+        {rail === "proposals" && <div className="rail-content">
+          {selectedProposal ? <article className="proposal-detail-card">
+            <header className="proposal-header"><div><strong>Paragraph {blockMap.get(selectedProposal.block_id)?.order_index ? blockMap.get(selectedProposal.block_id)!.order_index + 1 : "—"}</strong><p>Proposed by {selectedProposal.author_display}</p></div><button className="close-btn" onClick={() => setSelectedProposalId(null)}>✕</button></header>
+            <div className="diff-view"><div className="diff-box original"><h4>Original text</h4><p><DiffText original={selectedProposal.original_text} proposed={selectedProposal.proposed_text} side="original"/></p></div><div className="diff-box proposed"><h4>Proposed text</h4><p><DiffText original={selectedProposal.original_text} proposed={selectedProposal.proposed_text} side="proposed"/></p></div></div>
+            {selectedProposal.rationale && <div className="proposal-rationale"><strong>Reviewer&apos;s rationale:</strong><p>{selectedProposal.rationale}</p></div>}
+            {counteringId === selectedProposal.id ? <div className="counter-form"><label htmlFor="counter-text-input">Counterproposal text</label><textarea id="counter-text-input" value={counterDraft} onChange={(e) => setCounterDraft(e.target.value)} rows={4}/><label htmlFor="counter-reason-input">Decision reason (required)</label><input id="counter-reason-input" value={decisionReason} onChange={(e) => setDecisionReason(e.target.value)} placeholder="Explain counterproposal intent…"/><div><button disabled={busy || decisionReason.trim().length < 3 || counterDraft.trim() === selectedProposal.original_text} onClick={() => void resolveProposal(selectedProposal.id, "counter", counterDraft)}>Send counterproposal</button><button className="discard" onClick={() => setCounteringId(null)}>Cancel</button></div></div> : <div className="decision-form"><label htmlFor="decision-reason-input">Decision reason (required)</label><input id="decision-reason-input" value={decisionReason} onChange={(e) => setDecisionReason(e.target.value)} placeholder="Explain acceptance or rejection rationale…"/><div className="decision-actions"><button className="accept-btn" disabled={busy || decisionReason.trim().length < 3} onClick={() => void resolveProposal(selectedProposal.id, "accept")}>✓ Accept change</button><button className="counter-btn" disabled={busy} onClick={() => { setCounteringId(selectedProposal.id); setCounterDraft(selectedProposal.proposed_text); }}>✎ Counter</button><button className="reject-btn" disabled={busy || decisionReason.trim().length < 3} onClick={() => void resolveProposal(selectedProposal.id, "reject")}>✕ Reject</button></div></div>}
+          </article> : pendingProposals.length > 0 ? <div className="proposal-list">{pendingProposals.map((proposal) => <article key={proposal.id} className="proposal-card" onClick={() => setSelectedProposalId(proposal.id)}><div><strong>Paragraph {blockMap.get(proposal.block_id)?.order_index ? blockMap.get(proposal.block_id)!.order_index + 1 : "—"}</strong><p>Proposed by {proposal.author_display}</p></div><button className="proposal-jump">Review →</button></article>)}</div> : <div className="empty-rail-state"><span className="check-icon">✓</span><p>All proposed changes resolved.</p></div>}
+        </div>}
+        {rail === "details" && <div className="rail-content"><section className="details-card"><h3>Contract metadata</h3><div className="meta-row"><span>Status</span><strong>{contract.status}</strong></div><div className="meta-row"><span>Version</span><strong>v{contract.current_version}</strong></div><div className="meta-row"><span>Initiator</span><strong>{initiatorParty?.name ?? "Contract Owner"}</strong></div><div className="meta-row"><span>Counterparty</span><strong>{clientParty?.name ?? "Client Reviewer"}</strong></div><div className="meta-row"><span>Reviewer Email</span><strong>{clientParty?.email ?? "reviewer@example.test"}</strong></div></section></div>}
+      </aside>
+    </div>
+
+    {newContractOpen && <div className="modal-backdrop"><form className="modal-card" onSubmit={(e) => { e.preventDefault(); void createContract(); }}><h2>Create new contract</h2><p>Upload a Word document to start a new tracked negotiation.</p><label htmlFor="new-contract-title">Contract title</label><input id="new-contract-title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required/><label htmlFor="new-contract-file">Word document (.docx)</label><input id="new-contract-file" type="file" accept=".docx" onChange={(e) => { if (e.target.files?.[0]) { setNewFile(e.target.files[0]); if (!newTitle) setNewTitle(titleFromFilename(e.target.files[0].name)); } }} required/><div className="modal-actions"><button type="button" onClick={() => setNewContractOpen(false)}>Cancel</button><button type="submit" disabled={busy || !newFile || !newTitle.trim()}>Create contract</button></div></form></div>}
+
+    {shareOpen && credentials && <div className="modal-backdrop"><div className="modal-card"><h2>Reviewer access credentials</h2><p>Provide these credentials to the client reviewer to invite them to propose changes.</p><div className="cred-field"><label>Reviewer Link</label><input value={credentials.link} readOnly onClick={(e) => (e.target as HTMLInputElement).select()}/></div><div className="cred-field"><label>Username</label><input value={credentials.username} readOnly/></div><div className="cred-field"><label>Password</label><div><input type={passwordVisible ? "text" : "password"} value={credentials.password ?? ""} readOnly/><button type="button" onClick={() => setPasswordVisible(!passwordVisible)}>{passwordVisible ? "Hide" : "Show"}</button></div></div><div className="modal-actions"><button onClick={() => setShareOpen(false)}>Done</button></div></div></div>}
+
+    {aiOpen && <aside className="ai-drawer"><header className="ai-drawer-header"><div><strong>✨ Pactline AI Assistant</strong><small>Contract analysis & drafting</small></div><button className="close-btn" onClick={() => setAiOpen(false)}>✕</button></header>
+      {!aiAcknowledged ? <div className="ai-notice-card"><h3>External Data Processing Notice</h3><p>Pactline AI uses external AI services (Groq / Anthropic API) to analyze contract paragraphs and generate clause rewrites. Contract content will be processed according to strict data protection standards.</p><label className="ack-check"><input type="checkbox" checked={aiAcknowledged} onChange={(e) => setAiAcknowledged(e.target.checked)}/> I acknowledge and authorize external processing of contract text for AI assistance.</label></div> : <div className="ai-chat-body">
+        {targetBlock && <div className="ai-target-banner"><span>Targeting Paragraph {targetBlock.order_index + 1}: &quot;{targetBlock.current_text.slice(0, 60)}…&quot;</span><button onClick={() => setAiTargetBlockId(null)}>Clear target</button></div>}
+        <div className="ai-messages-list">{currentMessages.map((msg) => <div className={`ai-message ${msg.role}`} key={msg.id}><p>{msg.content}</p></div>)}{aiBusy && <div className="ai-message assistant loading"><span className="spinner-mark"/>Analyzing contract…</div>}<div ref={aiMessagesEndRef}/></div>
+        {aiDraft && <div className="ai-draft-card"><h4>Proposed AI Change</h4>{aiDraft.heading && <strong>{aiDraft.heading}</strong>}{aiDraft.paragraphs?.map((p, i) => <p key={i}>{p}</p>)}{aiDraft.replacementText && <p>{aiDraft.replacementText}</p>}<div className="ai-draft-actions"><button disabled={aiBusy} onClick={() => void applyAiDraft()}>Apply to document as Version {contract.current_version + 1}</button><button className="discard" onClick={() => setAiDraft(null)}>Discard</button></div></div>}
+        <div className="ai-input-bar"><input value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendAiMessage(); } }} placeholder={aiMode === "rewrite" ? "Describe how to rewrite this paragraph…" : "Ask about terms, risks, or requested changes…"} disabled={aiBusy}/><button disabled={aiBusy || !aiInput.trim()} onClick={() => void sendAiMessage()}>Send</button></div>
+      </div>}
     </aside>}
-    <div className="toast-region" aria-live="polite">{toast && <div className="toast"><span>✓</span>{toast}</div>}</div>
-  </main>;
+  </div>;
 }

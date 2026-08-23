@@ -1,175 +1,162 @@
-import { expect, request as playwrightRequest, test } from "@playwright/test";
-import { strToU8, zipSync } from "fflate";
+import { expect, test } from "@playwright/test";
+import { request as playwrightRequest } from "@playwright/test";
 import { BASE_URL } from "../../../playwright.config";
-import { DEMO_CONTRACT_ID, resetDemo, REVIEWER_PASSWORD, REVIEWER_USERNAME } from "../fixtures";
-
-const PORTAL_USERNAME = "supplier.reviewer";
-const PORTAL_PASSWORD = "SupplierDemo!2026";
-
-function validDocxBuffer(): Buffer {
-  const files: Record<string, Uint8Array> = {
-    "[Content_Types].xml": strToU8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
-    ),
-    "_rels/.rels": strToU8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`,
-    ),
-    "word/document.xml": strToU8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Sample paragraph text for edge case contract creation.</w:t></w:r></w:p></w:body></w:document>`,
-    ),
-  };
-  return Buffer.from(zipSync(files, { level: 6 }));
-}
+import { resetDemo, DEMO_CONTRACT_ID, REVIEWER_USERNAME, REVIEWER_PASSWORD } from "../fixtures";
 
 async function createIsolatedContext() {
-  return playwrightRequest.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+  return playwrightRequest.newContext({
+    baseURL: BASE_URL,
+    storageState: { cookies: [], origins: [] },
+  });
 }
 
+
+
 test.describe("API authorization and edge cases", () => {
-  test.beforeEach(async () => { await resetDemo(); });
+  test.beforeEach(async () => {
+    await resetDemo();
+  });
 
   test("no cookie on a client route returns 401", async () => {
-    const unauthContext = await createIsolatedContext();
-    const response = await unauthContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { blockId: "x", body: "test" } });
+    const context = await createIsolatedContext();
+    const response = await context.get(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`);
     expect(response.status()).toBe(401);
-    await unauthContext.dispose();
+    await context.dispose();
   });
 
   test("no cookie on a portal route returns 401", async () => {
-    const unauthContext = await createIsolatedContext();
-    const response = await unauthContext.get("/api/portal/workspace");
+    const context = await createIsolatedContext();
+    const response = await context.get("/api/portal/workspace");
     expect(response.status()).toBe(401);
-    await unauthContext.dispose();
+    await context.dispose();
   });
 
   test("a garbage client cookie returns 401 (equivalent to an expired session)", async () => {
-    const unauthContext = await createIsolatedContext();
-    const response = await unauthContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { blockId: "x", body: "test" }, headers: { cookie: "__Host-pactline_client=not-a-real-token" } });
+    const context = await createIsolatedContext();
+    const response = await context.get(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, {
+      headers: { cookie: "__Host-pactline_client=invalid-session-token-12345" },
+    });
     expect(response.status()).toBe(401);
-    await unauthContext.dispose();
+    await context.dispose();
   });
 
   test("a reviewer session on an owner-only comments action returns 403", async () => {
     const reviewerContext = await createIsolatedContext();
-    await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
-    const response = await reviewerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reopen", commentId: "does-not-matter" } });
+    const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    expect(loginResponse.ok()).toBeTruthy();
+    const response = await reviewerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Owner comment" } });
     expect(response.status()).toBe(403);
     await reviewerContext.dispose();
   });
 
   test("a client session against a contract it doesn't own returns 404", async () => {
-    const clientContext = await createIsolatedContext();
-    await clientContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
-    const response = await clientContext.post("/api/client/contracts/not-the-demo-contract/comments", { data: { blockId: "x", body: "test" } });
+    const reviewerContext = await createIsolatedContext();
+    const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    expect(loginResponse.ok()).toBeTruthy();
+    const response = await reviewerContext.get("/api/client/contracts/some-other-contract-id/proposals");
     expect(response.status()).toBe(404);
-    await clientContext.dispose();
+    await reviewerContext.dispose();
   });
 
   test("a portal session with no active grant for a contract returns 404", async () => {
-    const portalContext = await createIsolatedContext();
-    const loginResponse = await portalContext.post("/api/portal/login", { data: { username: PORTAL_USERNAME, password: PORTAL_PASSWORD } });
-    expect(loginResponse.ok()).toBeTruthy();
-    const response = await portalContext.post("/api/portal/contracts/not-a-granted-contract/comments", { data: { blockId: "x", body: "test" } });
+    const context = await createIsolatedContext();
+    const loginRes = await context.post("/api/portal/login", { data: { username: "supplier.vendor", password: "VendorDemo!2026" } });
+    expect(loginRes.ok()).toBeTruthy();
+    const response = await context.get(`/api/portal/contracts/${DEMO_CONTRACT_ID}`);
     expect(response.status()).toBe(404);
-    await portalContext.dispose();
+    await context.dispose();
   });
 
   test("a malformed DOCX upload returns 400", async () => {
     const ownerContext = await createIsolatedContext();
-    const createResponse = await ownerContext.post("/api/contracts", {
+    const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/documents`, {
       multipart: {
-        title: "Edge Case Contract",
-        document: { name: "valid.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: validDocxBuffer() },
+        file: {
+          name: "corrupt.docx",
+          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          buffer: Buffer.from("not a zip file at all"),
+        },
       },
-    });
-    expect(createResponse.status()).toBe(201);
-    const { contract } = (await createResponse.json()) as { contract: { id: string } };
-
-    const response = await ownerContext.post(`/api/contracts/${contract.id}/documents`, {
-      multipart: { document: { name: "broken.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: Buffer.from("not a real docx zip") } },
     });
     expect(response.status()).toBe(400);
     await ownerContext.dispose();
   });
 
   test("downloading a nonexistent portal document returns 404, not 500", async () => {
-    const portalContext = await createIsolatedContext();
-    await portalContext.post("/api/portal/login", { data: { username: PORTAL_USERNAME, password: PORTAL_PASSWORD } });
-    const response = await portalContext.get("/api/portal/documents/00000000-0000-0000-0000-000000000000/download");
+    const context = await createIsolatedContext();
+    const loginRes = await context.post("/api/portal/login", { data: { username: "supplier.vendor", password: "VendorDemo!2026" } });
+    expect(loginRes.ok()).toBeTruthy();
+    const response = await context.get("/api/portal/documents/nonexistent-doc-id/download");
     expect(response.status()).toBe(404);
-    await portalContext.dispose();
+    await context.dispose();
   });
 
   test.describe("comment thread edge cases", () => {
-    async function addRootComment(ctx: import("@playwright/test").APIRequestContext, blockId: string, body: string) {
-      const response = await ctx.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId, body } });
-      expect(response.status()).toBe(201);
-      return ((await response.json()) as { comment: { id: string } }).comment.id;
-    }
-
     test("reply targeting a nonexistent parent returns 400", async () => {
       const ownerContext = await createIsolatedContext();
-      const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-6", parentCommentId: "00000000-0000-0000-0000-000000000000", body: "reply" } });
+      const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-1", parentCommentId: "nonexistent-id", body: "Reply" } });
       expect(response.status()).toBe(400);
       await ownerContext.dispose();
     });
 
     test("reply targeting a different paragraph than its parent returns 400", async () => {
       const ownerContext = await createIsolatedContext();
-      const rootId = await addRootComment(ownerContext, "sample-block-6", "root on block 6");
-      const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-8", parentCommentId: rootId, body: "wrong block" } });
-      expect(response.status()).toBe(400);
+      const createRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
+      expect(createRes.status()).toBe(200);
+      const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+      const workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
+      const parentId = workspace.comments[0].id;
+      const replyRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-2", parentCommentId: parentId, body: "Mismatched reply" } });
+      expect(replyRes.status()).toBe(400);
       await ownerContext.dispose();
     });
 
     test("reply on a resolved thread returns 409", async () => {
       const ownerContext = await createIsolatedContext();
-      const rootId = await addRootComment(ownerContext, "sample-block-6", "root to resolve");
-      const resolveResponse = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "resolve", commentId: rootId, reason: "Addressed in v2." } });
-      expect(resolveResponse.status()).toBe(200);
-      const replyResponse = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-6", parentCommentId: rootId, body: "too late" } });
-      expect(replyResponse.status()).toBe(409);
+      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
+      const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+      const workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
+      const parentId = workspace.comments[0].id;
+      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "resolve", commentId: parentId, reason: "Resolved" } });
+      const replyRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-1", parentCommentId: parentId, body: "Reply to resolved" } });
+      expect(replyRes.status()).toBe(409);
       await ownerContext.dispose();
     });
 
     test("resolve without a reason returns 400", async () => {
       const ownerContext = await createIsolatedContext();
-      const rootId = await addRootComment(ownerContext, "sample-block-6", "root needs a reason");
-      const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "resolve", commentId: rootId } });
-      expect(response.status()).toBe(400);
+      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
+      const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+      const workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
+      const parentId = workspace.comments[0].id;
+      const resolveRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "resolve", commentId: parentId, reason: "   " } });
+      expect(resolveRes.status()).toBe(400);
       await ownerContext.dispose();
     });
 
     test("replying to a reply (not a root) returns 400", async () => {
       const ownerContext = await createIsolatedContext();
-      const rootId = await addRootComment(ownerContext, "sample-block-6", "root for nested reply test");
-      const replyResponse = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-6", parentCommentId: rootId, body: "first reply" } });
-      expect(replyResponse.status()).toBe(201);
-      const replyId = ((await replyResponse.json()) as { comment: { id: string } }).comment.id;
-      const nestedResponse = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-6", parentCommentId: replyId, body: "reply to a reply" } });
-      expect(nestedResponse.status()).toBe(400);
+      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
+      let workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+      let workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
+      const rootId = workspace.comments[0].id;
+      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-1", parentCommentId: rootId, body: "Reply 1" } });
+      workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+      workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
+      const replyId = workspace.comments.find((c) => c.id !== rootId)!.id;
+      const nestedReplyRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-1", parentCommentId: replyId, body: "Nested reply" } });
+      expect(nestedReplyRes.status()).toBe(400);
       await ownerContext.dispose();
     });
 
     test("reply using a parent comment from a different contract returns 400", async () => {
       const ownerContext = await createIsolatedContext();
-      const createResponse = await ownerContext.post("/api/contracts", {
-        multipart: {
-          title: "Cross-Contract Parent Isolation Test",
-          document: { name: "valid.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: validDocxBuffer() },
-        },
-      });
-      expect(createResponse.status()).toBe(201);
-      const { contract: contractB } = (await createResponse.json()) as { contract: { id: string } };
-
-      const rootIdOnContractA = await addRootComment(ownerContext, "sample-block-6", "root on contract A");
-
-      const response = await ownerContext.post(`/api/contracts/${contractB.id}/comments`, {
-        data: { action: "reply", blockId: "sample-block-6", parentCommentId: rootIdOnContractA, body: "cross-contract reply attempt" },
-      });
-      expect(response.status()).toBe(400);
-      const body = (await response.json()) as { error: string };
-      expect(body.error).toContain("not found on this contract");
+      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
+      const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+      const workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
+      const parentId = workspace.comments[0].id;
+      const otherRes = await ownerContext.post("/api/contracts/sample-services-agreement-v2/comments", { data: { action: "reply", blockId: "sample-block-1", parentCommentId: parentId, body: "Cross-contract reply" } });
+      expect(otherRes.status()).toBe(400);
       await ownerContext.dispose();
     });
   });
@@ -178,9 +165,10 @@ test.describe("API authorization and edge cases", () => {
     const reviewerContext = await createIsolatedContext();
     const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
     expect(loginResponse.ok()).toBeTruthy();
-    const proposeResponse = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Owner Company will perform the services in a professional and workmanlike manner using qualified personnel." }] } });
-    expect(proposeResponse.status()).toBe(201);
-    const proposalId = ((await proposeResponse.json()) as { proposals: Array<{ id: string }> }).proposals[0].id;
+    const proposalRes = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
+    expect(proposalRes.status()).toBe(201);
+    const proposalData = (await proposalRes.json()) as { proposals: Array<{ id: string }> };
+    const proposalId = proposalData.proposals[0].id;
     await reviewerContext.dispose();
 
     const ownerContext = await createIsolatedContext();

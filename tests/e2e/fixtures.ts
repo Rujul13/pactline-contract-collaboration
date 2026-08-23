@@ -11,6 +11,7 @@ const D1_DIR = ".wrangler/state-e2e/v3/d1/miniflare-D1DatabaseObject";
 let migrated = false;
 
 function findDbFile(): string | undefined {
+  if (!existsSync(D1_DIR)) return undefined;
   return readdirSync(D1_DIR).find((name) => name.endsWith(".sqlite") && name !== "metadata.sqlite");
 }
 
@@ -62,12 +63,19 @@ export async function resetDemo(): Promise<void> {
     storageState: { cookies: [], origins: [] },
     extraHTTPHeaders: { host: `localhost:${new URL(BASE_URL).port}` },
   });
+
   if (!migrated) {
-    if (!existsSync(D1_DIR) || !findDbFile()) {
-      await context.post("/api/demo/reset").catch(() => undefined);
+    // Wait for Miniflare to materialize D1 database file by probing GET / instead of calling /api/demo/reset before tables exist
+    let retries = 0;
+    while ((!existsSync(D1_DIR) || !findDbFile()) && retries < 20) {
+      await context.get("/").catch(() => undefined);
+      if (existsSync(D1_DIR) && findDbFile()) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      retries++;
     }
     migrateLocalD1();
   }
+
   const response = await context.post("/api/demo/reset");
   if (!response.ok()) throw new Error(`Demo reset failed: ${response.status()} ${await response.text()}`);
   await context.dispose();

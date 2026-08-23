@@ -6,8 +6,6 @@ import { ensureV2Workspace } from "@/lib/v2";
 export async function POST(request: Request) {
   const auth = await requireOwnerApi(request); if (auth.response) return auth.response;
   const user = auth.user;
-  // This endpoint is owner-only and can mutate only the fixed synthetic demo
-  // ID, so reset it even if an earlier seed used a different owner identity.
   const objects = await env.DB.prepare("SELECT object_key FROM document_objects WHERE contract_id=?").bind(DEMO_CONTRACT_ID).all<{ object_key: string }>().catch(() => ({ results: [] }));
 
   try {
