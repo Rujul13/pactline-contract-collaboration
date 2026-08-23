@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { parseDrizzleStatements } from "../lib/migrations-runtime.ts";
+import { parseDrizzleStatements } from "../lib/migration-parser.js";
 
 async function migratedDatabase() {
   const database = new DatabaseSync(":memory:");
