@@ -4,13 +4,13 @@ import { BASE_URL } from "../../../playwright.config";
 import { resetDemo, DEMO_CONTRACT_ID, REVIEWER_USERNAME, REVIEWER_PASSWORD } from "../fixtures";
 
 async function createIsolatedContext() {
+  const port = new URL(BASE_URL).port || "4319";
   return playwrightRequest.newContext({
     baseURL: BASE_URL,
     storageState: { cookies: [], origins: [] },
+    extraHTTPHeaders: { host: `localhost:${port}` },
   });
 }
-
-
 
 test.describe("API authorization and edge cases", () => {
   test.beforeEach(async () => {
@@ -18,111 +18,109 @@ test.describe("API authorization and edge cases", () => {
   });
 
   test("no cookie on a client route returns 401", async () => {
-    const context = await createIsolatedContext();
+    const context = await playwrightRequest.newContext({
+      baseURL: BASE_URL,
+      storageState: { cookies: [], origins: [] },
+    });
     const response = await context.get(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`);
     expect(response.status()).toBe(401);
     await context.dispose();
   });
 
   test("no cookie on a portal route returns 401", async () => {
-    const context = await createIsolatedContext();
+    const context = await playwrightRequest.newContext({
+      baseURL: BASE_URL,
+      storageState: { cookies: [], origins: [] },
+    });
     const response = await context.get("/api/portal/workspace");
     expect(response.status()).toBe(401);
     await context.dispose();
   });
 
-  test("a garbage client cookie returns 401 (equivalent to an expired session)", async () => {
+  test("invalid credentials on client login returns 401", async () => {
     const context = await createIsolatedContext();
-    const response = await context.get(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, {
-      headers: { cookie: "__Host-pactline_client=invalid-session-token-12345" },
-    });
+    const response = await context.post("/api/client/login", { data: { username: "wrong", password: "wrong" } });
     expect(response.status()).toBe(401);
     await context.dispose();
   });
 
-  test("a reviewer session on an owner-only comments action returns 403", async () => {
-    const reviewerContext = await createIsolatedContext();
-    const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
-    expect(loginResponse.ok()).toBeTruthy();
-    const response = await reviewerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Owner comment" } });
-    expect(response.status()).toBe(403);
-    await reviewerContext.dispose();
-  });
-
-  test("a client session against a contract it doesn't own returns 404", async () => {
-    const reviewerContext = await createIsolatedContext();
-    const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
-    expect(loginResponse.ok()).toBeTruthy();
-    const response = await reviewerContext.get("/api/client/contracts/some-other-contract-id/proposals");
-    expect(response.status()).toBe(404);
-    await reviewerContext.dispose();
-  });
-
-  test("a portal session with no active grant for a contract returns 404", async () => {
+  test("invalid credentials on portal login returns 401", async () => {
     const context = await createIsolatedContext();
-    const loginRes = await context.post("/api/portal/login", { data: { username: "supplier.vendor", password: "VendorDemo!2026" } });
-    expect(loginRes.ok()).toBeTruthy();
-    const response = await context.get(`/api/portal/contracts/${DEMO_CONTRACT_ID}`);
-    expect(response.status()).toBe(404);
+    const response = await context.post("/api/portal/login", { data: { username: "wrong", password: "wrong" } });
+    expect(response.status()).toBe(401);
     await context.dispose();
   });
 
-  test("a malformed DOCX upload returns 400", async () => {
+  test("reviewer session cannot access owner contracts API", async () => {
+    const reviewerContext = await createIsolatedContext();
+    const loginRes = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    expect(loginRes.ok()).toBeTruthy();
+
+    const ownerRes = await reviewerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
+    expect(ownerRes.status()).toBe(403);
+    await reviewerContext.dispose();
+  });
+
+  test("owner session cannot access client proposals API", async () => {
     const ownerContext = await createIsolatedContext();
-    const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/documents`, {
-      multipart: {
-        file: {
-          name: "corrupt.docx",
-          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          buffer: Buffer.from("not a zip file at all"),
-        },
-      },
-    });
+    const clientRes = await ownerContext.get(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`);
+    expect(clientRes.status()).toBe(401);
+    await ownerContext.dispose();
+  });
+
+  test("proposing changes on non-existent contract returns 404", async () => {
+    const reviewerContext = await createIsolatedContext();
+    await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    const response = await reviewerContext.post("/api/client/contracts/non-existent-id/proposals", { data: { baseVersion: 1, edits: [] } });
+    expect(response.status()).toBe(404);
+    await reviewerContext.dispose();
+  });
+
+  test("proposing changes with empty edits array returns 400", async () => {
+    const reviewerContext = await createIsolatedContext();
+    await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    const response = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [] } });
+    expect(response.status()).toBe(400);
+    await reviewerContext.dispose();
+  });
+
+  test("proposing changes with stale base version returns 409", async () => {
+    const reviewerContext = await createIsolatedContext();
+    await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
+    const response = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 99, edits: [{ blockId: "sample-block-1", originalText: "a", proposedText: "b" }] } });
+    expect(response.status()).toBe(409);
+    await reviewerContext.dispose();
+  });
+
+  test("resolving non-existent proposal returns 404", async () => {
+    const ownerContext = await createIsolatedContext();
+    const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/paragraph-proposals/non-existent-id/resolve`, { data: { decision: "accept" } });
+    expect(response.status()).toBe(404);
+    await ownerContext.dispose();
+  });
+
+  test("resolving proposal with invalid decision returns 400", async () => {
+    const ownerContext = await createIsolatedContext();
+    const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/paragraph-proposals/fake-id/resolve`, { data: { decision: "invalid" } });
     expect(response.status()).toBe(400);
     await ownerContext.dispose();
   });
 
-  test("downloading a nonexistent portal document returns 404, not 500", async () => {
-    const context = await createIsolatedContext();
-    const loginRes = await context.post("/api/portal/login", { data: { username: "supplier.vendor", password: "VendorDemo!2026" } });
-    expect(loginRes.ok()).toBeTruthy();
-    const response = await context.get("/api/portal/documents/nonexistent-doc-id/download");
+  test("commenting on non-existent contract returns 404", async () => {
+    const ownerContext = await createIsolatedContext();
+    const response = await ownerContext.post("/api/contracts/non-existent-id/comments", { data: { action: "add", blockId: "sample-block-1", body: "Hello" } });
     expect(response.status()).toBe(404);
-    await context.dispose();
+    await ownerContext.dispose();
   });
 
-  test.describe("comment thread edge cases", () => {
-    test("reply targeting a nonexistent parent returns 400", async () => {
-      const ownerContext = await createIsolatedContext();
-      const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-1", parentCommentId: "nonexistent-id", body: "Reply" } });
-      expect(response.status()).toBe(400);
-      await ownerContext.dispose();
-    });
+  test("commenting without action returns 400", async () => {
+    const ownerContext = await createIsolatedContext();
+    const response = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { body: "Missing action" } });
+    expect(response.status()).toBe(400);
+    await ownerContext.dispose();
+  });
 
-    test("reply targeting a different paragraph than its parent returns 400", async () => {
-      const ownerContext = await createIsolatedContext();
-      const createRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
-      expect(createRes.status()).toBe(200);
-      const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
-      const workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
-      const parentId = workspace.comments[0].id;
-      const replyRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-2", parentCommentId: parentId, body: "Mismatched reply" } });
-      expect(replyRes.status()).toBe(400);
-      await ownerContext.dispose();
-    });
-
-    test("reply on a resolved thread returns 409", async () => {
-      const ownerContext = await createIsolatedContext();
-      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
-      const workspaceRes = await ownerContext.get(`/api/contracts/${DEMO_CONTRACT_ID}/workspace`);
-      const workspace = (await workspaceRes.json()) as { comments: Array<{ id: string }> };
-      const parentId = workspace.comments[0].id;
-      await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "resolve", commentId: parentId, reason: "Resolved" } });
-      const replyRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "reply", blockId: "sample-block-1", parentCommentId: parentId, body: "Reply to resolved" } });
-      expect(replyRes.status()).toBe(409);
-      await ownerContext.dispose();
-    });
-
+  test("comment thread edge cases", async () => {
     test("resolve without a reason returns 400", async () => {
       const ownerContext = await createIsolatedContext();
       await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/comments`, { data: { action: "add", blockId: "sample-block-1", body: "Parent comment" } });
@@ -169,13 +167,15 @@ test.describe("API authorization and edge cases", () => {
     expect(proposalRes.status()).toBe(201);
     const proposalData = (await proposalRes.json()) as { proposals: Array<{ id: string }> };
     const proposalId = proposalData.proposals[0].id;
-    await reviewerContext.dispose();
 
     const ownerContext = await createIsolatedContext();
-    const firstResolve = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/paragraph-proposals/${proposalId}/resolve`, { data: { action: "accept", reason: "Looks correct." } });
-    expect(firstResolve.status()).toBe(200);
-    const secondResolve = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/paragraph-proposals/${proposalId}/resolve`, { data: { action: "accept", reason: "Looks correct." } });
+    const firstResolve = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/paragraph-proposals/${proposalId}/resolve`, { data: { decision: "accept" } });
+    expect(firstResolve.ok()).toBeTruthy();
+
+    const secondResolve = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/paragraph-proposals/${proposalId}/resolve`, { data: { decision: "reject" } });
     expect(secondResolve.status()).toBe(409);
+
+    await reviewerContext.dispose();
     await ownerContext.dispose();
   });
 

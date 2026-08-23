@@ -18,6 +18,15 @@ function validDocxBuffer(): Buffer {
   return Buffer.from(zipSync(files, { level: 6 }));
 }
 
+function createOwnerContext(playwright: import("@playwright/test").PlaywrightTest) {
+  const port = new URL(BASE_URL).port || "4319";
+  return playwright.request.newContext({
+    baseURL: BASE_URL,
+    storageState: { cookies: [], origins: [] },
+    extraHTTPHeaders: { host: `localhost:${port}` },
+  });
+}
+
 test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   test.beforeEach(async () => {
     await resetDemo();
@@ -54,7 +63,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("multiple approvers of the same approval kind are supported per version", async ({ playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
 
     // Assign Legal Approver A
     const resA = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
@@ -99,7 +108,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("DOCX upload invalidates delegated approvals into pending state for new version and blocks agreement until re-approval", async ({ playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
 
     // Step 1: Create a new non-demo contract
     const createRes = await ownerContext.post("/api/contracts", {
@@ -147,7 +156,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
     // Step 5: Verify delegated assignment is recreated in pending state for v2
     const approverV2Res = await approverContext.get(`/api/approver/contracts/${contract.id}`);
     expect(approverV2Res.ok()).toBe(true);
-    const v2Data = (await approverV2Res.json()) as { assignment: { version_number: number; status: string } };
+    const v2Data = (await approverV2Res.json()) as { assignment: { id: string; version_number: number; status: string } };
     expect(v2Data.assignment.version_number).toBe(2);
     expect(v2Data.assignment.status).toBe("pending");
 
@@ -157,7 +166,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
 
     // Step 7: Approver approves v2
     const approveV2Res = await approverContext.post(`/api/approver/contracts/${contract.id}/decide`, {
-      data: { assignmentId: v2Data.assignment.version_number === 2 ? (v2Data.assignment as unknown as { id: string }).id : assignData.assignment.id, decision: "approved", decisionReason: "Approved v2 DOCX revised legal terms." },
+      data: { assignmentId: v2Data.assignment.id, decision: "approved", decisionReason: "Approved v2 DOCX revised legal terms." },
     });
     expect(approveV2Res.ok()).toBe(true);
 
@@ -170,7 +179,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("AI replacement and AI clause addition invalidate delegated approvals into pending state for new version", async ({ playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
 
     // Step 1: Assign delegated approver for v1
     const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
@@ -220,7 +229,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("counterparty agreement and locking path is blocked when a required delegated approval is pending or edits_requested", async ({ playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
 
     // Step 1: Owner assigns required delegated legal approver for v1
     const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
@@ -276,10 +285,12 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("hostile Host-header is rejected and invite URL always uses configured canonical app URL", async ({ playwright }) => {
+    const port = new URL(BASE_URL).port || "4319";
     const ownerContext = await playwright.request.newContext({
       baseURL: BASE_URL,
       storageState: { cookies: [], origins: [] },
       extraHTTPHeaders: {
+        host: `localhost:${port}`,
         "x-forwarded-host": "evil.attacker.test",
         "oai-authenticated-user-id": "local-contract-owner",
         "oai-authenticated-user-email": "owner@example.test",
@@ -306,7 +317,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("concurrent double-consumption of an invite token is prevented via atomic compare-and-set", async ({ playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
     const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
       data: {
         action: "assign_delegated",
@@ -339,7 +350,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("concurrent double-decision on the same assignment is rejected via compare-and-set UPDATE", async ({ playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
     const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
       data: {
         action: "assign_delegated",
@@ -375,7 +386,7 @@ test.describe("Phase 3 Delegated Multi-Person Approvals E2E", () => {
   });
 
   test("full delegated approval lifecycle, two-step invite, version invalidation, and server gate enforcement", async ({ page, playwright }) => {
-    const ownerContext = await playwright.request.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const ownerContext = await createOwnerContext(playwright);
 
     // Step 1: Owner assigns Delegated Legal Approver for active version (v1)
     const assignRes = await ownerContext.post(`/api/contracts/${DEMO_CONTRACT_ID}/approvals`, {
