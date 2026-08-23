@@ -1,17 +1,10 @@
 import { parseDrizzleStatements } from "./migration-parser.js";
 
-const migrationModules = import.meta.glob<{ default: string }>("../drizzle/*.sql", {
+const migrationModules = import.meta.glob<string>("../drizzle/*.sql", {
   query: "?raw",
+  import: "default",
   eager: true,
 });
-
-function getSqlString(mod: unknown): string {
-  if (typeof mod === "string") return mod;
-  if (mod && typeof mod === "object") {
-    if ("default" in mod) return getSqlString((mod as { default: unknown }).default);
-  }
-  return String(mod ?? "");
-}
 
 export async function ensureMigrationsApplied(): Promise<void> {
   const { env } = await import("cloudflare:workers");
@@ -30,16 +23,13 @@ export async function ensureMigrationsApplied(): Promise<void> {
     pathA.localeCompare(pathB)
   );
 
-  for (const [path, module] of sortedEntries) {
+  for (const [path, rawSql] of sortedEntries) {
     const filename = path.split("/").pop();
     if (filename && !applied.has(filename)) {
-      const rawSql = getSqlString(module);
       const statements = parseDrizzleStatements(rawSql);
 
       for (const statement of statements) {
-        if (statement.trim()) {
-          await db.exec(statement);
-        }
+        await db.exec(statement);
       }
 
       await db
