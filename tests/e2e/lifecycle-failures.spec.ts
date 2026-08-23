@@ -16,6 +16,9 @@ test.describe("lifecycle transition failures", () => {
     await page.goto(`/workflow/${DEMO_CONTRACT_ID}`);
     await page.getByRole("button", { name: "Add requirement" }).click();
     await expect(page.getByRole("status")).toContainText("approval required.");
+    await page.getByLabel("Lifecycle stage").selectOption("external_review");
+    await page.getByRole("button", { name: "Save lifecycle details" }).click();
+    await expect(page.getByRole("status")).toContainText("Lifecycle details saved");
     await page.getByLabel("Lifecycle stage").selectOption("approved");
     await page.getByRole("button", { name: "Save lifecycle details" }).click();
     await expect(page.getByRole("status")).toContainText("Complete every required approval");
