@@ -8,11 +8,17 @@ export async function POST(request: Request) {
   const auth = await requireOwnerApi(request); if (auth.response) return auth.response;
   const user = auth.user;
 
-  try {
-    await ensureMigrationsApplied();
-  } catch (error) {
-    console.error("Failed to apply D1 migrations on reset:", error);
-    return Response.json({ error: "Failed to apply D1 migrations", detail: String(error) }, { status: 500 });
+  // Cloudflare deployments apply migrations before publishing the Worker. Running
+  // the local E2E bootstrapper against that already-migrated database creates a
+  // conflicting migration ledger and prevents a demo reset. Keep the bootstrap
+  // for local development, where Miniflare starts with an empty D1 database.
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      await ensureMigrationsApplied();
+    } catch (error) {
+      console.error("Failed to apply local D1 migrations on reset:", error);
+      return Response.json({ error: "Unable to prepare the local demo database" }, { status: 500 });
+    }
   }
 
   const objects = await env.DB.prepare("SELECT object_key FROM document_objects WHERE contract_id=?").bind(DEMO_CONTRACT_ID).all<{ object_key: string }>().catch(() => ({ results: [] }));
