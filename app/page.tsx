@@ -123,7 +123,12 @@ export default function Home() {
     setLoading(true); setError("");
     const response = await fetch("/api/workspace", { cache: "no-store" });
     const result = await response.json() as { owner?: { name: string }; contracts?: ContractSummary[]; error?: string; signIn?: string };
-    if (!response.ok) { setError(result.error ?? "Unable to open the workspace"); setSignIn(result.signIn ?? ""); setLoading(false); return; }
+    if (!response.ok) {
+      setError(result.error ?? "Unable to open the workspace");
+      setSignIn(result.signIn ?? (response.status === 401 ? "/owner/login?return_to=/" : ""));
+      setLoading(false);
+      return;
+    }
     const nextContracts = result.contracts ?? []; setContracts(nextContracts);
     const nextId = preferredId || activeId || nextContracts[0]?.id;
     if (nextId) await loadContract(nextId); else setLoading(false);
