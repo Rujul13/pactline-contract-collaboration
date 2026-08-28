@@ -10,14 +10,14 @@ export const DEMO_PASSWORD = "ReviewDemo!2026";
 
 export const demoBlocks: DocumentBlock[] = [
   { id: "sample-block-1", kind: "title", text: "MASTER SERVICES AGREEMENT" },
-  { id: "sample-block-2", kind: "body", text: "This Master Services Agreement (the “Agreement”) is entered into between Owner Company and Client Company as of the effective date shown in the final signed copy." },
+  { id: "sample-block-2", kind: "body", text: "This Master Services Agreement (the “Agreement”) is entered into between Vendor Company and Customer Company as of the effective date shown in the final signed copy." },
   { id: "sample-block-3", kind: "body", text: "The parties agree that the following terms govern the services described in each statement of work issued under this Agreement." },
   { id: "sample-block-4", kind: "heading", text: "1. Services" },
-  { id: "sample-block-5", kind: "body", text: "Owner Company will provide the professional services described in each applicable statement of work, including the deliverables, schedule, fees, and acceptance criteria." },
-  { id: "sample-block-6", kind: "body", text: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience." },
+  { id: "sample-block-5", kind: "body", text: "Vendor Company will provide the professional services described in each applicable statement of work, including the deliverables, schedule, fees, and acceptance criteria." },
+  { id: "sample-block-6", kind: "body", text: "Vendor Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience." },
   { id: "sample-block-7", kind: "heading", text: "2. Fees and payment" },
-  { id: "sample-block-8", kind: "body", text: "Client Company will pay all undisputed invoices within thirty (30) days after receipt. Fees exclude applicable taxes and approved, reasonable out-of-pocket expenses." },
-  { id: "sample-block-9", kind: "body", text: "If Client Company disputes an invoice in good faith, it will notify Owner Company promptly and the parties will work together to resolve the disputed amount." },
+  { id: "sample-block-8", kind: "body", text: "Customer Company will pay all undisputed invoices within thirty (30) days after receipt. Fees exclude applicable taxes and approved, reasonable out-of-pocket expenses." },
+  { id: "sample-block-9", kind: "body", text: "If Customer Company disputes an invoice in good faith, it will notify Vendor Company promptly and the parties will work together to resolve the disputed amount." },
   { id: "sample-block-10", kind: "heading", text: "3. Confidentiality" },
   { id: "sample-block-11", kind: "body", text: "Each party will protect the other party’s Confidential Information using at least reasonable care and may use it only to perform or receive services under this Agreement." },
   { id: "sample-block-12", kind: "heading", text: "4. Term and termination" },
@@ -36,7 +36,7 @@ export async function ensureDemoWorkspace(user: ChatGPTUser) {
   const now = new Date().toISOString();
   const reviewDeadline = new Date(Date.now() + 14 * 86_400_000).toISOString();
   if (!existing) {
-    await db.prepare("INSERT INTO users (id, email, display_name, external_identity_id, status, created_at, updated_at) VALUES (?, ?, 'Contract Owner', ?, 'active', ?, ?)")
+    await db.prepare("INSERT INTO users (id, email, display_name, external_identity_id, status, created_at, updated_at) VALUES (?, ?, 'Vendor Admin', ?, 'active', ?, ?)")
       .bind(ownerId, user.email, user.userId, now, now).run();
   }
 
@@ -57,14 +57,14 @@ export async function ensureDemoWorkspace(user: ChatGPTUser) {
 
   await db.batch([
     db.prepare("INSERT INTO contracts (id, title, initiator_id, approver_id, status, lifecycle_stage, review_deadline_at, responsible_owner_id, contract_value_minor, currency, risk_level, current_version, created_at, updated_at) VALUES (?, 'Demo Master Services Agreement', ?, ?, 'negotiating', 'external_review', ?, ?, 2500000, 'USD', 'medium', 1, ?, ?)").bind(DEMO_CONTRACT_ID, ownerId, ownerId, reviewDeadline, ownerId, now, now),
-    db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'initiator', 'Contract Owner', 'Owner Company', 'owner@example.test', ?, ?)").bind(ownerPartyId, DEMO_CONTRACT_ID, now, now),
-    db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'counterparty', 'Client Reviewer', 'Client Company', 'reviewer@example.test', ?, ?)").bind(clientPartyId, DEMO_CONTRACT_ID, now, now),
+    db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'initiator', 'Vendor Admin', 'Vendor Company', 'vendor@example.test', ?, ?)").bind(ownerPartyId, DEMO_CONTRACT_ID, now, now),
+    db.prepare("INSERT INTO parties (id, contract_id, role, name, company, email, created_at, updated_at) VALUES (?, ?, 'counterparty', 'Customer Reviewer', 'Customer Company', 'customer@example.test', ?, ?)").bind(clientPartyId, DEMO_CONTRACT_ID, now, now),
     db.prepare("INSERT INTO access_accounts (id, contract_id, party_id, username, password_hash, permission, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'propose_changes', 'invited', '2099-12-31T23:59:59.000Z', ?, ?)").bind(accountId, DEMO_CONTRACT_ID, clientPartyId, DEMO_USERNAME, passwordHash, now, now),
     ...blockRows.map((block) => db.prepare("INSERT INTO document_blocks (id, contract_id, block_key, order_index, kind, current_text, content_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(block.id, DEMO_CONTRACT_ID, `paragraph-${block.orderIndex + 1}`, block.orderIndex, block.kind, block.text, block.hash, now, now)),
     db.prepare("INSERT INTO contract_versions (id, contract_id, version_number, created_by, snapshot, created_at) VALUES (?, ?, 1, ?, json(?), ?)").bind(versionId, DEMO_CONTRACT_ID, ownerId, JSON.stringify(snapshot), now),
     db.prepare("INSERT INTO review_rounds (id,contract_id,round_number,status,deadline_at,opened_by,created_at,updated_at) VALUES ('sample-review-round-1',?,1,'open',?,?,?,?)").bind(DEMO_CONTRACT_ID, reviewDeadline, ownerId, now, now),
     db.prepare("INSERT INTO reminder_schedules (id,contract_id,kind,channel,due_at,recipient,status,created_at,updated_at) VALUES ('sample-review-reminder-1',?,'review_deadline','in_app',?,'owner@example.test','scheduled',?,?)").bind(DEMO_CONTRACT_ID, reviewDeadline, now, now),
-    db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, 'Contract Owner', 'demo.created', 'contract', ?, 1, ?, json(?), ?)").bind(crypto.randomUUID(), DEMO_CONTRACT_ID, ownerId, DEMO_CONTRACT_ID, crypto.randomUUID(), JSON.stringify({ genericDemo: true }), now),
+    db.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, 'Vendor Admin', 'demo.created', 'contract', ?, 1, ?, json(?), ?)").bind(crypto.randomUUID(), DEMO_CONTRACT_ID, ownerId, DEMO_CONTRACT_ID, crypto.randomUUID(), JSON.stringify({ genericDemo: true }), now),
   ]);
 
   const blob = createDocumentDocx("Demo Master Services Agreement", 1, demoBlocks);

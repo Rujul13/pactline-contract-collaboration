@@ -82,9 +82,9 @@ export async function ownerFromSession(cookieHeader: string | null) {
   const email = ownerEnvironment().OWNER_EMAIL?.trim() || "owner@pactline.local";
   return {
     userId: "pactline-contract-owner",
-    displayName: "Contract Owner",
+    displayName: "Vendor Admin",
     email,
-    fullName: "Contract Owner",
+    fullName: "Vendor Admin",
   };
 }
 

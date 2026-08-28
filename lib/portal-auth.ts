@@ -71,7 +71,7 @@ export async function getPortalSession(request: Request): Promise<PortalSession 
 
 export async function requirePortalSession(request: Request) {
   const session = await getPortalSession(request);
-  return session ? { session, response: null } : { session: null, response: Response.json({ error: "Supplier portal sign-in required" }, { status: 401 }) };
+  return session ? { session, response: null } : { session: null, response: Response.json({ error: "Customer portal sign-in required" }, { status: 401 }) };
 }
 
 export async function revokePortalSession(request: Request) {

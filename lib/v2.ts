@@ -9,8 +9,8 @@ export const DEMO_SUPPLIER_ORGANIZATION_ID = "demo-supplier-organization";
 export const DEMO_SECOND_SUPPLIER_ORGANIZATION_ID = "demo-second-supplier-organization";
 export const DEMO_SUPPLIER_RELATIONSHIP_ID = "demo-supplier-relationship";
 export const DEMO_PORTAL_ACCOUNT_ID = "demo-portal-account";
-export const DEMO_PORTAL_USERNAME = "supplier.reviewer";
-export const DEMO_PORTAL_PASSWORD = "SupplierDemo!2026";
+export const DEMO_PORTAL_USERNAME = "customer.reviewer";
+export const DEMO_PORTAL_PASSWORD = "CustomerDemo!2026";
 export const DEMO_EXPIRED_CONTRACT_ID = "sample-expired-nda";
 
 function minimalPdf(title: string, lines: string[]) {
@@ -45,8 +45,8 @@ async function ensureExpiredContract(ownerId: string, now: string) {
   const supplierPartyId = "expired-supplier-party";
   await env.DB.batch([
     env.DB.prepare("INSERT INTO contracts (id,title,initiator_id,approver_id,status,lifecycle_stage,responsible_owner_id,risk_level,current_version,owner_organization_id,counterparty_organization_id,origin,effective_date,expiration_date,created_at,updated_at) VALUES (?,?,?,?,'locked','expired',?,'low',1,?,?,'direct_upload','2025-01-01','2025-12-31',?,?)").bind(DEMO_EXPIRED_CONTRACT_ID, "Expired Mutual NDA", ownerId, ownerId, ownerId, DEMO_OWNER_ORGANIZATION_ID, DEMO_SUPPLIER_ORGANIZATION_ID, now, now),
-    env.DB.prepare("INSERT INTO parties (id,contract_id,role,name,company,email,created_at,updated_at) VALUES (?,?,'initiator','Contract Owner','Pactline Demo Company','owner@example.test',?,?)").bind(ownerPartyId, DEMO_EXPIRED_CONTRACT_ID, now, now),
-    env.DB.prepare("INSERT INTO parties (id,contract_id,role,name,company,email,created_at,updated_at) VALUES (?,?,'counterparty','Supplier Reviewer','Demo Supplier','supplier@example.test',?,?)").bind(supplierPartyId, DEMO_EXPIRED_CONTRACT_ID, now, now),
+    env.DB.prepare("INSERT INTO parties (id,contract_id,role,name,company,email,created_at,updated_at) VALUES (?,?,'initiator','Vendor Admin','Pactline Demo Vendor','vendor@example.test',?,?)").bind(ownerPartyId, DEMO_EXPIRED_CONTRACT_ID, now, now),
+    env.DB.prepare("INSERT INTO parties (id,contract_id,role,name,company,email,created_at,updated_at) VALUES (?,?,'counterparty','Customer Reviewer','Demo Customer','customer@example.test',?,?)").bind(supplierPartyId, DEMO_EXPIRED_CONTRACT_ID, now, now),
     ...blocks.map((block, index) => env.DB.prepare("INSERT INTO document_blocks (id,contract_id,block_key,order_index,kind,current_text,content_hash,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(block.id, DEMO_EXPIRED_CONTRACT_ID, `paragraph-${index + 1}`, index, block.kind, block.text, hashes[index], now, now)),
     env.DB.prepare("INSERT INTO contract_versions (id,contract_id,version_number,created_by,snapshot,created_at) VALUES (?,?,1,?,json(?),?)").bind("expired-nda-version", DEMO_EXPIRED_CONTRACT_ID, ownerId, JSON.stringify(blocks.map((block, index) => ({ id: block.id, block_key: `paragraph-${index + 1}`, order_index: index, kind: block.kind, current_text: block.text }))), now),
   ]);
@@ -64,8 +64,8 @@ async function ensureExpiredContract(ownerId: string, now: string) {
 async function ensureVaultDemo(ownerId: string, now: string) {
   const records = [
     { id: "vault-demo-msa", title: "Demo Master Services Agreement", category: "msa", filename: "Demo Master Services Agreement.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", objectKey: "contracts/sample-services-agreement/versions/1/demo-master-services-agreement.docx", expiration: "2027-12-31", linked: "sample-services-agreement", bytes: null as Uint8Array | null },
-    { id: "vault-demo-insurance", title: "Certificate of Insurance", category: "insurance_certificate", filename: "Certificate of Insurance.pdf", type: "application/pdf", objectKey: "orgs/demo-owner-organization/vault/vault-demo-insurance/versions/1/certificate-of-insurance.pdf", expiration: "2026-09-30", linked: null, bytes: minimalPdf("Certificate of Insurance", ["Named insured: Demo Supplier", "Commercial general liability: $2,000,000", "Expiration date: September 30, 2026"]) },
-    { id: "vault-demo-invoice", title: "Professional Services Invoice 1042", category: "invoice", filename: "Invoice-1042.pdf", type: "application/pdf", objectKey: "orgs/demo-owner-organization/vault/vault-demo-invoice/versions/1/invoice-1042.pdf", expiration: null, linked: null, bytes: minimalPdf("Invoice 1042", ["Supplier: Demo Supplier", "Amount due: $8,000", "Payment terms: Net 30", "Due date: September 15, 2026"]) },
+    { id: "vault-demo-insurance", title: "Certificate of Insurance", category: "insurance_certificate", filename: "Certificate of Insurance.pdf", type: "application/pdf", objectKey: "orgs/demo-owner-organization/vault/vault-demo-insurance/versions/1/certificate-of-insurance.pdf", expiration: "2026-09-30", linked: null, bytes: minimalPdf("Certificate of Insurance", ["Named insured: Demo Customer", "Commercial general liability: $2,000,000", "Expiration date: September 30, 2026"]) },
+    { id: "vault-demo-invoice", title: "Professional Services Invoice 1042", category: "invoice", filename: "Invoice-1042.pdf", type: "application/pdf", objectKey: "orgs/demo-owner-organization/vault/vault-demo-invoice/versions/1/invoice-1042.pdf", expiration: null, linked: null, bytes: minimalPdf("Invoice 1042", ["Customer: Demo Customer", "Amount due: $8,000", "Payment terms: Net 30", "Due date: September 15, 2026"]) },
   ];
   for (const item of records) {
     const exists = await env.DB.prepare("SELECT id FROM vault_documents WHERE id=?").bind(item.id).first();
@@ -94,7 +94,7 @@ async function ensureTemplateDemo(now: string) {
       { id: "template-title", kind: "title", text: "SERVICES AGREEMENT" },
       { id: "template-intro", kind: "body", text: "This Services Agreement is entered into between {{customer_name}} and {{supplier_name}}, effective {{effective_date}}." },
       { id: "template-services-heading", kind: "heading", text: "1. Services" },
-      { id: "template-services", kind: "body", text: "The Supplier will provide {{services_description}} for a total fee of {{contract_value}}." },
+      { id: "template-services", kind: "body", text: "The Vendor will provide {{services_description}} for a total fee of {{contract_value}}." },
       { id: "template-payment-heading", kind: "heading", text: "2. Payment" },
       { id: "template-payment", kind: "body", text: "Invoices are payable {{payment_terms}} from receipt." },
       { id: "template-clauses", kind: "body", text: "{{optional_clauses}}" },
@@ -106,25 +106,35 @@ async function ensureTemplateDemo(now: string) {
     const fields = ["customer_name", "supplier_name", "effective_date", "services_description", "contract_value", "payment_terms"].map((key) => ({ key, label: key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()), required: true }));
     await env.DB.prepare("INSERT INTO contract_templates (id,organization_id,name,contract_type,object_key,filename,fields,status,created_at,updated_at) VALUES (?,?, 'Services Agreement Template','services',?,?,json(?),'active',?,?)").bind(templateId, DEMO_OWNER_ORGANIZATION_ID, objectKey, "Services Agreement Template.docx", JSON.stringify(fields), now, now).run();
   }
-  await env.DB.prepare("INSERT INTO clause_modules (id,organization_id,name,heading,body,status,created_at,updated_at) VALUES ('demo-data-security-clause',?,'Standard Data Security','Data Security','Supplier will maintain commercially reasonable administrative, technical, and physical safeguards for Customer data.','active',?,?) ON CONFLICT(id) DO NOTHING").bind(DEMO_OWNER_ORGANIZATION_ID, now, now).run();
+  await env.DB.prepare("INSERT INTO clause_modules (id,organization_id,name,heading,body,status,created_at,updated_at) VALUES ('demo-data-security-clause',?,'Standard Data Security','Data Security','Vendor will maintain commercially reasonable administrative, technical, and physical safeguards for Customer data.','active',?,?) ON CONFLICT(id) DO NOTHING").bind(DEMO_OWNER_ORGANIZATION_ID, now, now).run();
 }
 
 export async function ensureV2Workspace(user: ChatGPTUser) {
   const now = new Date().toISOString();
+  const passwordHash = await hashPassword(DEMO_PORTAL_PASSWORD);
   const owner = await env.DB.prepare("SELECT id FROM users WHERE external_identity_id=?").bind(user.userId).first<{ id: string }>();
   if (!owner) return;
   const ownerOrg = await env.DB.prepare("SELECT id FROM organizations WHERE id=?").bind(DEMO_OWNER_ORGANIZATION_ID).first();
   if (!ownerOrg) {
-    const passwordHash = await hashPassword(DEMO_PORTAL_PASSWORD);
     await env.DB.batch([
-      env.DB.prepare("INSERT INTO organizations (id,name,kind,timezone,status,created_at,updated_at) VALUES (?, 'Pactline Demo Company','customer','America/Indianapolis','active',?,?)").bind(DEMO_OWNER_ORGANIZATION_ID, now, now),
-      env.DB.prepare("INSERT INTO organizations (id,name,kind,timezone,status,created_at,updated_at) VALUES (?, 'Demo Supplier','supplier','America/Indianapolis','active',?,?)").bind(DEMO_SUPPLIER_ORGANIZATION_ID, now, now),
-      env.DB.prepare("INSERT INTO organizations (id,name,kind,timezone,status,created_at,updated_at) VALUES (?, 'Secondary Supplier','supplier','America/Indianapolis','active',?,?)").bind(DEMO_SECOND_SUPPLIER_ORGANIZATION_ID, now, now),
+      env.DB.prepare("INSERT INTO organizations (id,name,kind,timezone,status,created_at,updated_at) VALUES (?, 'Pactline Demo Vendor','customer','America/Indianapolis','active',?,?)").bind(DEMO_OWNER_ORGANIZATION_ID, now, now),
+      env.DB.prepare("INSERT INTO organizations (id,name,kind,timezone,status,created_at,updated_at) VALUES (?, 'Demo Customer','supplier','America/Indianapolis','active',?,?)").bind(DEMO_SUPPLIER_ORGANIZATION_ID, now, now),
+      env.DB.prepare("INSERT INTO organizations (id,name,kind,timezone,status,created_at,updated_at) VALUES (?, 'Secondary Customer','supplier','America/Indianapolis','active',?,?)").bind(DEMO_SECOND_SUPPLIER_ORGANIZATION_ID, now, now),
       env.DB.prepare("INSERT INTO organization_memberships (id,organization_id,user_id,role,status,created_at,updated_at) VALUES ('demo-owner-membership',?,?, 'owner_admin','active',?,?)").bind(DEMO_OWNER_ORGANIZATION_ID, owner.id, now, now),
       env.DB.prepare("INSERT INTO supplier_relationships (id,customer_organization_id,supplier_organization_id,status,created_at,updated_at) VALUES (?,?,?,'active',?,?)").bind(DEMO_SUPPLIER_RELATIONSHIP_ID, DEMO_OWNER_ORGANIZATION_ID, DEMO_SUPPLIER_ORGANIZATION_ID, now, now),
-      env.DB.prepare("INSERT INTO portal_accounts (id,organization_id,username,password_hash,display_name,email,status,failed_attempts,created_at,updated_at) VALUES (?,?,?,?,?,'supplier@example.test','active',0,?,?)").bind(DEMO_PORTAL_ACCOUNT_ID, DEMO_SUPPLIER_ORGANIZATION_ID, DEMO_PORTAL_USERNAME, passwordHash, "Supplier Reviewer", now, now),
+      env.DB.prepare("INSERT INTO portal_accounts (id,organization_id,username,password_hash,display_name,email,status,failed_attempts,created_at,updated_at) VALUES (?,?,?,?,?,'customer@example.test','active',0,?,?)").bind(DEMO_PORTAL_ACCOUNT_ID, DEMO_SUPPLIER_ORGANIZATION_ID, DEMO_PORTAL_USERNAME, passwordHash, "Customer Reviewer", now, now),
     ]);
   }
+  await env.DB.batch([
+    env.DB.prepare("UPDATE organizations SET name='Pactline Demo Vendor',updated_at=? WHERE id=?").bind(now, DEMO_OWNER_ORGANIZATION_ID),
+    env.DB.prepare("UPDATE organizations SET name='Demo Customer',updated_at=? WHERE id=?").bind(now, DEMO_SUPPLIER_ORGANIZATION_ID),
+    env.DB.prepare("UPDATE organizations SET name='Secondary Customer',updated_at=? WHERE id=?").bind(now, DEMO_SECOND_SUPPLIER_ORGANIZATION_ID),
+    env.DB.prepare("UPDATE portal_accounts SET username=?,password_hash=?,display_name='Customer Reviewer',email='customer@example.test',updated_at=? WHERE id=?").bind(DEMO_PORTAL_USERNAME, passwordHash, now, DEMO_PORTAL_ACCOUNT_ID),
+    env.DB.prepare("UPDATE parties SET name='Vendor Admin',company='Vendor Company',email='vendor@example.test',updated_at=? WHERE contract_id='sample-services-agreement' AND role='initiator'").bind(now),
+    env.DB.prepare("UPDATE parties SET name='Customer Reviewer',company='Customer Company',email='customer@example.test',updated_at=? WHERE contract_id='sample-services-agreement' AND role='counterparty'").bind(now),
+    env.DB.prepare("UPDATE parties SET name='Vendor Admin',company='Pactline Demo Vendor',email='vendor@example.test',updated_at=? WHERE contract_id=? AND role='initiator'").bind(now, DEMO_EXPIRED_CONTRACT_ID),
+    env.DB.prepare("UPDATE parties SET name='Customer Reviewer',company='Demo Customer',email='customer@example.test',updated_at=? WHERE contract_id=? AND role='counterparty'").bind(now, DEMO_EXPIRED_CONTRACT_ID),
+  ]);
   await env.DB.prepare("INSERT INTO organization_memberships (id,organization_id,user_id,role,status,created_at,updated_at) VALUES (?,?,?,'owner_admin','active',?,?) ON CONFLICT(organization_id,user_id) DO UPDATE SET role='owner_admin',status='active',updated_at=excluded.updated_at").bind(crypto.randomUUID(), DEMO_OWNER_ORGANIZATION_ID, owner.id, now, now).run();
   await env.DB.prepare("UPDATE contracts SET owner_organization_id=?,counterparty_organization_id=? WHERE id='sample-services-agreement' AND owner_organization_id IS NULL").bind(DEMO_OWNER_ORGANIZATION_ID, DEMO_SUPPLIER_ORGANIZATION_ID).run();
   const renewalDate = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);

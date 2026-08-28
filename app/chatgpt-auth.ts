@@ -26,7 +26,7 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   if (!userId || !email) {
     const host = requestHeaders.get("host") ?? "";
     if (host.startsWith("127.0.0.1:") || host.startsWith("localhost:")) {
-      return { userId: "local-contract-owner", displayName: "Contract Owner", email: "owner@example.test", fullName: "Contract Owner" };
+      return { userId: "local-contract-owner", displayName: "Vendor Admin", email: "owner@example.test", fullName: "Vendor Admin" };
     }
     return ownerFromSession(requestHeaders.get("cookie"));
   }

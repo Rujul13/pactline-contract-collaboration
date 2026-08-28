@@ -29,13 +29,13 @@ export default function OwnerLoginPage() {
   return <main className="review-portal">
     <form className="portal-login" onSubmit={signIn}>
       <div className="client-login-brand"><span className="brand-mark">P</span><strong>Pactline</strong></div>
-      <p className="login-lock">Owner workspace</p>
+      <p className="login-lock">Vendor workspace</p>
       <h1>Sign in to your contracts</h1>
-      <p>The owner workspace is private. Client reviewers use the separate username and password included with their contract link.</p>
-      <label htmlFor="owner-password">Owner password</label>
+      <p>The vendor workspace is private. Customers use the separate username and password included with their contract link.</p>
+      <label htmlFor="owner-password">Vendor password</label>
       <input id="owner-password" type="password" autoComplete="current-password" required minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} />
       {error && <div className="portal-message error" role="alert">{error}</div>}
-      <button type="submit" disabled={busy || password.length < 12}>{busy ? "Signing in…" : "Open owner workspace"}</button>
+      <button type="submit" disabled={busy || password.length < 12}>{busy ? "Signing in…" : "Open vendor workspace"}</button>
       <small>Secure session · 12-hour expiry · password never stored in the browser</small>
     </form>
   </main>;

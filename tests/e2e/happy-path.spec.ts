@@ -50,9 +50,9 @@ test.describe.serial("owner and reviewer happy path", () => {
     await reviewerPage.locator("#review-password").fill(REVIEWER_PASSWORD);
     await reviewerPage.getByRole("button", { name: "Sign in securely" }).click();
     await expect(reviewerPage.getByText("Pactline client review")).toBeVisible();
-    const feesParagraph = reviewerPage.locator(".paragraph-content", { hasText: "Owner Company will perform the services in a professional" });
+    const feesParagraph = reviewerPage.locator(".paragraph-content", { hasText: "Vendor Company will perform the services in a professional" });
     await feesParagraph.click();
-    await reviewerPage.locator('textarea[id^="review-block-"]').fill("Owner Company will perform the services in a professional, workmanlike, and timely manner using qualified personnel.");
+    await reviewerPage.locator('textarea[id^="review-block-"]').fill("Vendor Company will perform the services in a professional, workmanlike, and timely manner using qualified personnel.");
     await reviewerPage.getByRole("button", { name: "Submit proposed changes" }).click();
     await expect(reviewerPage.getByText(/proposed change.*sent to the contract owner/)).toBeVisible();
 
@@ -78,7 +78,7 @@ test.describe.serial("owner and reviewer happy path", () => {
     await pendingProposalJump.click();
     await page.getByRole("button", { name: "Counter propose", exact: true }).click();
     const counterBox = page.locator('textarea[id^="counter-"]');
-    await counterBox.fill("Owner Company will perform the services in a professional and workmanlike manner using qualified, appropriately experienced personnel.");
+    await counterBox.fill("Vendor Company will perform the services in a professional and workmanlike manner using qualified, appropriately experienced personnel.");
     await page.getByRole("button", { name: "Send counterproposal" }).click();
     await expect(page.getByText("Counterproposal sent back to the reviewer.")).toBeVisible();
 
