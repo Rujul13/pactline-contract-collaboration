@@ -2,7 +2,7 @@ import { expect, test, request as playwrightRequest } from "@playwright/test";
 import { BASE_URL } from "../../playwright.config";
 import { DEMO_CONTRACT_ID, resetDemo } from "./fixtures";
 
-test.describe("Supplier portal comments and authorization", () => {
+test.describe("Customer portal comments and authorization", () => {
   test.beforeEach(async () => {
     await resetDemo();
   });
@@ -10,13 +10,13 @@ test.describe("Supplier portal comments and authorization", () => {
   test("supplier comment creation, replies, view-only restrictions, and resolved thread layout", async ({ page }) => {
     // 1. Login to the Supplier Portal
     await page.goto("/portal");
-    await expect(page.getByRole("heading", { name: "Supplier portal" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Customer portal" })).toBeVisible();
 
-    await page.locator('input[value="supplier.reviewer"]').fill("supplier.reviewer");
-    await page.locator('input[type="password"]').fill("SupplierDemo!2026");
+    await page.locator('input[value="customer.reviewer"]').fill("customer.reviewer");
+    await page.locator('input[type="password"]').fill("CustomerDemo!2026");
     await page.getByRole("button", { name: "Sign in securely" }).click();
 
-    await expect(page.getByText("Pactline supplier portal")).toBeVisible();
+    await expect(page.getByText("Pactline customer portal")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Contracts" })).toBeVisible();
 
     // 2. Open the demo contract (propose_changes permission)
@@ -25,7 +25,7 @@ test.describe("Supplier portal comments and authorization", () => {
     await expect(page.getByRole("heading", { name: "Demo Master Services Agreement" })).toBeVisible();
 
     // 3. Add a top-level paragraph comment
-    const paragraphBlock = page.locator(".supplier-block").filter({ hasText: "Owner Company will perform the services" });
+    const paragraphBlock = page.locator(".supplier-block").filter({ hasText: "Vendor Company will perform the services" });
     await expect(paragraphBlock).toBeVisible();
 
     const commentBtn = paragraphBlock.locator(".paragraph-comment-trigger");
@@ -40,7 +40,7 @@ test.describe("Supplier portal comments and authorization", () => {
 
     await expect(page.getByText("Comment added to the paragraph discussion.")).toBeVisible();
     const thread = paragraphBlock.locator(".paragraph-thread");
-    await expect(thread.getByText("Supplier Reviewer (supplier.reviewer)")).toBeVisible();
+    await expect(thread.getByText("Customer Reviewer (customer.reviewer)")).toBeVisible();
     await expect(thread.getByText("Staging supplier comment check.")).toBeVisible();
 
     // 4. Reply once to the comment
@@ -70,7 +70,7 @@ test.describe("Supplier portal comments and authorization", () => {
 
     // Direct E2E API assertion using isolated context: a view-only supplier receives 403 when posting a comment
     const portalContext = await playwrightRequest.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
-    const portalLoginRes = await portalContext.post("/api/portal/login", { data: { username: "supplier.reviewer", password: "SupplierDemo!2026" } });
+    const portalLoginRes = await portalContext.post("/api/portal/login", { data: { username: "customer.reviewer", password: "CustomerDemo!2026" } });
     expect(portalLoginRes.ok()).toBeTruthy();
     const apiCommentRes = await portalContext.post("/api/portal/contracts/sample-expired-nda/comments", {
       data: { blockId: "expired-nda-body", body: "Attempted bypass comment" }
@@ -97,7 +97,7 @@ test.describe("Supplier portal comments and authorization", () => {
     await demoContractArticle.getByRole("button", { name: "Open review" }).click();
     await expect(page.getByRole("heading", { name: "Demo Master Services Agreement" })).toBeVisible();
 
-    const resolvedParagraph = page.locator(".supplier-block").filter({ hasText: "Owner Company will perform the services" });
+    const resolvedParagraph = page.locator(".supplier-block").filter({ hasText: "Vendor Company will perform the services" });
     const resolvedThread = resolvedParagraph.locator(".paragraph-thread");
     await expect(resolvedThread.getByText("Resolved: Resolved by owner in E2E validation.")).toBeVisible();
     await expect(resolvedThread.locator(".thread-reply-trigger")).not.toBeVisible();

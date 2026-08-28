@@ -5,8 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import { readdirSync } from "node:fs";
 
 const D1_DIR = ".wrangler/state-e2e/v3/d1/miniflare-D1DatabaseObject";
-const PORTAL_USERNAME = "supplier.reviewer";
-const PORTAL_PASSWORD = "SupplierDemo!2026";
+const PORTAL_USERNAME = "customer.reviewer";
+const PORTAL_PASSWORD = "CustomerDemo!2026";
 
 function getDatabase() {
   const files = readdirSync(D1_DIR);

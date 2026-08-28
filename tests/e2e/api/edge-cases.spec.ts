@@ -166,7 +166,7 @@ test.describe("API authorization and edge cases", () => {
     const reviewerContext = await createIsolatedContext();
     const loginResponse = await reviewerContext.post("/api/client/login", { data: { username: REVIEWER_USERNAME, password: REVIEWER_PASSWORD } });
     expect(loginResponse.ok()).toBeTruthy();
-    const proposalRes = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
+    const proposalRes = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Vendor Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
     expect(proposalRes.status()).toBe(201);
     const proposalData = (await proposalRes.json()) as { proposals: Array<{ id: string }> };
     const proposalId = proposalData.proposals[0].id;
@@ -198,7 +198,7 @@ test.describe("API authorization and edge cases", () => {
     const reviewerAgreeBody = (await reviewerAgree.json()) as { locked?: boolean };
     expect(reviewerAgreeBody.locked).toBe(true);
 
-    const proposeResponse = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Owner Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
+    const proposeResponse = await reviewerContext.post(`/api/client/contracts/${DEMO_CONTRACT_ID}/proposals`, { data: { baseVersion: 1, edits: [{ blockId: "sample-block-6", originalText: "Vendor Company will perform the services in a professional and workmanlike manner using personnel with appropriate skills and experience.", proposedText: "Different text." }] } });
     expect(proposeResponse.status()).toBe(409);
     await reviewerContext.dispose();
     await ownerContext.dispose();

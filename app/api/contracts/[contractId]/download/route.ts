@@ -10,6 +10,6 @@ export async function GET(request: Request, context: { params: Promise<{ contrac
   if (!owner) return Response.json({ error: "Contract not found" }, { status: 404 });
   const rendered = await renderContractDocx(contractId); if (!rendered) return Response.json({ error: "Contract not found" }, { status: 404 });
   const now = new Date().toISOString();
-  await env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, 'Contract Owner', 'document.downloaded', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, contractId, rendered.contract.current_version, request.headers.get("x-request-id") ?? crypto.randomUUID(), JSON.stringify({ final: rendered.contract.status === "locked" }), now).run();
+  await env.DB.prepare("INSERT INTO audit_log_entries (id, contract_id, actor_id, actor_display, action, target_type, target_id, version_number, request_id, metadata, created_at) VALUES (?, ?, ?, 'Vendor Admin', 'document.downloaded', 'contract', ?, ?, ?, json(?), ?)").bind(crypto.randomUUID(), contractId, user.userId, contractId, rendered.contract.current_version, request.headers.get("x-request-id") ?? crypto.randomUUID(), JSON.stringify({ final: rendered.contract.status === "locked" }), now).run();
   return docxResponse(rendered);
 }

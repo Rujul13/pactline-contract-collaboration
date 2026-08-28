@@ -36,7 +36,7 @@ export async function GET(request: Request) {
       WHERE u.external_identity_id = ?
       ORDER BY c.updated_at DESC
     `).bind(user.userId).all();
-    return Response.json({ owner: { name: "Contract Owner", email: user.email }, contracts: contracts.results }, { headers: { "cache-control": "private, no-store" } });
+    return Response.json({ owner: { name: "Vendor Admin", email: user.email }, contracts: contracts.results }, { headers: { "cache-control": "private, no-store" } });
   } catch (error) {
     console.error("Unable to load the owner workspace", error);
     const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();

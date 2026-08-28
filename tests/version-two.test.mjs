@@ -49,7 +49,7 @@ test("AI extraction remains provisional until a human confirms source-linked res
   assert.match(search, /reindexPendingSearchChunks/);
 });
 
-test("the demo seeds a reusable template, supplier vault, and lifecycle alerts", async () => {
+test("the demo seeds a reusable template, customer portal documents, and lifecycle alerts", async () => {
   const [seed, alerts, manage, portal] = await Promise.all([source("lib/v2.ts"), source("lib/alerts.ts"), source("app/manage/page.tsx"), source("app/portal/page.tsx")]);
   assert.match(seed, /Services Agreement Template/);
   assert.match(seed, /Certificate of Insurance/);
@@ -59,8 +59,9 @@ test("the demo seeds a reusable template, supplier vault, and lifecycle alerts",
   assert.match(alerts, /renewal_due/);
   assert.match(manage, /Contract knowledge base/);
   assert.match(manage, /Human confirmation required/);
-  assert.match(portal, /Submit supplier agreement/);
-  assert.match(portal, /Current and expired agreements/);
+  assert.match(portal, /Customer portal/);
+  assert.match(portal, /shared by your vendor/);
+  assert.doesNotMatch(portal, /Submit supplier agreement/);
   assert.match(portal, /changedDrafts/);
   assert.match(portal, /password: ""/);
 });
