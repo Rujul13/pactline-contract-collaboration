@@ -7,6 +7,30 @@ test.describe("Customer portal comments and authorization", () => {
     await resetDemo();
   });
 
+  test("customer can upload a shared vault document", async () => {
+    const portalContext = await playwrightRequest.newContext({ baseURL: BASE_URL, storageState: { cookies: [], origins: [] } });
+    const login = await portalContext.post("/api/portal/login", { data: { username: "customer.reviewer", password: "CustomerDemo!2026" } });
+    expect(login.ok()).toBeTruthy();
+    const upload = await portalContext.post("/api/portal/documents", {
+      multipart: {
+        title: "Customer insurance certificate",
+        category: "insurance_certificate",
+        document: { name: "customer-insurance.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\ncustomer portal test\n%%EOF") },
+      },
+    });
+    expect(upload.status()).toBe(201);
+    const created = await upload.json() as { document: { id: string; title: string } };
+    expect(created.document.title).toBe("Customer insurance certificate");
+    const workspace = await portalContext.get("/api/portal/workspace");
+    expect(workspace.ok()).toBeTruthy();
+    const payload = await workspace.json() as { documents: Array<{ id: string; title: string }> };
+    expect(payload.documents).toContainEqual(expect.objectContaining({ id: created.document.id, title: "Customer insurance certificate" }));
+    const download = await portalContext.get(`/api/portal/documents/${created.document.id}/download`);
+    expect(download.status()).toBe(200);
+    expect(download.headers()["content-type"]).toContain("application/pdf");
+    await portalContext.dispose();
+  });
+
   test("supplier comment creation, replies, view-only restrictions, and resolved thread layout", async ({ page }) => {
     // 1. Login to the Supplier Portal
     await page.goto("/portal");
