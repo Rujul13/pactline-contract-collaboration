@@ -40,6 +40,19 @@ test("stores Word uploads separately from structured contract data", async () =>
   assert.match(parser, /valid DOCX package/);
 });
 
+test("allows customers to upload shared vault documents without owner access", async () => {
+  const [portalPage, portalUpload] = await Promise.all([
+    readFile(new URL("../app/portal/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/portal/documents/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(portalPage, /Upload document/);
+  assert.match(portalPage, /Upload and share/);
+  assert.match(portalUpload, /requirePortalSession\(request\)/);
+  assert.match(portalUpload, /Only DOCX and PDF documents are accepted/);
+  assert.match(portalUpload, /visibility,status.*'shared','active'/);
+  assert.match(portalUpload, /env\.DOCUMENTS\.put/);
+});
+
 test("supports durable paragraph proposals and immutable owner decisions", async () => {
   const [page, clientPage, proposalRoute, resolutionRoute] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
