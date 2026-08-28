@@ -206,7 +206,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --cookie-jar "$RUNNER_TEMP/portal-cookies.txt" \
             --header "Content-Type: application/json" \
-            --data '{"username":"supplier.reviewer","password":"SupplierDemo!2026"}' \
+            --data '{"username":"customer.reviewer","password":"CustomerDemo!2026"}' \
             "$BASE_URL/api/portal/login" >/dev/null
           curl --fail-with-body --silent --show-error \
             --cookie "$RUNNER_TEMP/portal-cookies.txt" \
