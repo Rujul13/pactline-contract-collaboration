@@ -53,7 +53,7 @@ test("supports durable paragraph proposals and immutable owner decisions", async
   assert.match(page, /Reject/);
   assert.match(page, /scrollIntoView/);
   assert.match(page, /openReviewQueue/);
-  assert.match(clientPage, /Owner counterproposal/);
+  assert.match(clientPage, /Vendor counterproposal/);
   assert.match(proposalRoute, /The document changed during your review/);
   assert.match(resolutionRoute, /contract_versions/);
   assert.match(resolutionRoute, /paragraph_proposal\.accepted/);
