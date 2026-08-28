@@ -49,7 +49,7 @@ test.describe.serial("owner and reviewer happy path", () => {
     await reviewerPage.locator("#review-username").fill(REVIEWER_USERNAME);
     await reviewerPage.locator("#review-password").fill(REVIEWER_PASSWORD);
     await reviewerPage.getByRole("button", { name: "Sign in securely" }).click();
-    await expect(reviewerPage.getByText("Pactline client review")).toBeVisible();
+    await expect(reviewerPage.getByText("Pactline customer review")).toBeVisible();
     const feesParagraph = reviewerPage.locator(".paragraph-content", { hasText: "Vendor Company will perform the services in a professional" });
     await feesParagraph.click();
     await reviewerPage.locator('textarea[id^="review-block-"]').fill("Vendor Company will perform the services in a professional, workmanlike, and timely manner using qualified personnel.");
